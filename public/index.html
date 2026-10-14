@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activador de bot</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --muted:#8b93a7;
+    --accent:#5865f2; --ok:#3ba55d; --warn:#f0b232; --bad:#ed4245;
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  main{max-width:560px;margin:0 auto;padding:20px 16px 60px}
+  h1{font-size:22px;margin:8px 0 2px}
+  .sub{color:var(--muted);margin:0 0 20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:16px}
+  label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+  input,select{width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:#0f1115;color:var(--text);font-size:15px}
+  input:focus,select:focus{outline:2px solid var(--accent);border-color:transparent}
+  .row{display:flex;gap:10px}
+  .row>*{flex:1}
+  button{cursor:pointer;border:0;border-radius:10px;padding:12px 14px;font-size:15px;font-weight:600;color:#fff;background:var(--accent)}
+  button.sec{background:#2a2f3a}
+  button.danger{background:#3a2326;color:#ff8a8c}
+  button:disabled{opacity:.5;cursor:default}
+  .big{width:100%;margin-top:16px}
+  .pill{display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border-radius:999px;font-size:13px;font-weight:600;background:#222733}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+  .en_linea .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .conectando .dot{background:var(--warn)}
+  .error .dot{background:var(--bad)}
+  .head{display:flex;align-items:center;gap:12px;justify-content:space-between}
+  .bot{display:flex;align-items:center;gap:10px;min-width:0}
+  .bot img{width:40px;height:40px;border-radius:50%;background:#222733}
+  .bot b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:14px}
+  .stat{background:#12151b;border:1px solid var(--line);border-radius:10px;padding:10px}
+  .stat span{display:block;color:var(--muted);font-size:12px}
+  .stat b{font-size:17px}
+  .msg{margin-top:12px;font-size:14px;padding:10px 12px;border-radius:10px;display:none}
+  .msg.bad{display:block;background:#3a2326;color:#ff9a9c}
+  .msg.ok{display:block;background:#1f3326;color:#8ae3a6}
+  .err{color:#ff9a9c;font-size:13px;margin-top:10px;word-break:break-word}
+  a.btn{display:block;text-align:center;text-decoration:none;border-radius:10px;padding:12px 14px;font-size:15px;font-weight:600;color:#fff;background:var(--ok)}
+  .log{font:12px/1.6 ui-monospace,Menlo,monospace;color:var(--muted);max-height:190px;overflow:auto;margin:0;padding:0;list-style:none}
+  .log b{color:#aab1c5;font-weight:500}
+  h2{font-size:15px;margin:0 0 10px}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Activador de bot</h1>
+  <p class="sub">Pega el token y el ID. El bot se conecta y se mantiene en línea solo.</p>
+
+  <section class="card" id="statusCard">
+    <div class="head">
+      <div class="bot">
+        <img id="avatar" alt="" hidden>
+        <div style="min-width:0"><b id="botName">Sin bot activo</b><span class="hint" id="botId" style="margin:0"></span></div>
+      </div>
+      <span class="pill detenido" id="pill"><i class="dot"></i><span id="pillText">Detenido</span></span>
+    </div>
+    <div class="stats" id="stats" hidden>
+      <div class="stat"><span>Tiempo en línea</span><b id="sUp">—</b></div>
+      <div class="stat"><span>Ping</span><b id="sPing">—</b></div>
+      <div class="stat"><span>Servidores</span><b id="sGuilds">—</b></div>
+      <div class="stat"><span>Reinicios auto.</span><b id="sRest">0</b></div>
+    </div>
+    <div class="msg bad" id="intentWarn" hidden style="display:block">
+      <b>⚠️ Modo limitado.</b> Para que el antiraid detecte ingresos y bots nuevos, entra al
+      <b>Discord Developer Portal → tu bot → Bot</b> y activa <b>Server Members Intent</b> y
+      <b>Message Content Intent</b>. Luego pulsa <b>Reiniciar</b>.
+    </div>
+    <div class="err" id="lastErr"></div>
+    <div class="row" style="margin-top:14px" id="actions" hidden>
+      <button class="sec" id="btnRestart">Reiniciar</button>
+      <button class="danger" id="btnStop">Detener</button>
+    </div>
+    <div style="margin-top:14px" id="inviteWrap" hidden>
+      <div class="row">
+        <a class="btn" id="invite" target="_blank" rel="noopener">Invitar el bot a mi servidor ↗</a>
+        <button class="sec" id="btnCopy" type="button" style="flex:0 0 auto">Copiar link</button>
+      </div>
+      <div class="hint">Con este link agregas el bot a un servidor donde tengas permiso de administrar.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Configuración</h2>
+    <form id="form" autocomplete="off">
+      <label for="token">Token del bot</label>
+      <input id="token" type="password" placeholder="Pega el token aquí" autocomplete="new-password">
+      <div class="hint" id="tokenHint"></div>
+
+      <label for="id">ID del bot (Application ID)</label>
+      <input id="id" inputmode="numeric" placeholder="123456789012345678">
+
+      <div class="row">
+        <div>
+          <label for="presence">Estado</label>
+          <select id="presence">
+            <option value="online">En línea</option>
+            <option value="idle">Ausente</option>
+            <option value="dnd">No molestar</option>
+            <option value="invisible">Invisible</option>
+          </select>
+        </div>
+        <div>
+          <label for="activity">Jugando a… (opcional)</label>
+          <input id="activity" maxlength="100" placeholder="ej. /ayuda">
+        </div>
+      </div>
+
+      <button class="big" id="btnSave" type="submit">Activar bot</button>
+      <div class="msg" id="msg"></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Registro</h2>
+    <ul class="log" id="log"><li>Sin eventos todavía.</li></ul>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const labels = { en_linea: 'En línea', conectando: 'Conectando…', detenido: 'Detenido', error: 'Error' };
+let formFilled = false;
+
+function fmtUp(ms) {
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m + 'm ' + (s % 60) + 's';
+}
+
+function showMsg(text, kind) {
+  const m = $('msg');
+  m.textContent = text;
+  m.className = 'msg ' + kind;
+}
+
+async function api(path, body) {
+  let r;
+  try {
+    r = await fetch(path, body === undefined ? {} : {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (_) {
+    const e = new Error('No hay conexión con el servidor del bot. Abre el panel desde la dirección donde corre la app (no el archivo HTML suelto) y verifica que "npm start" esté activo.');
+    e.offline = true;
+    throw e;
+  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Error ' + r.status);
+  return data;
+}
+
+async function refresh() {
+  try {
+    const s = await api('/api/status');
+    $('pill').className = 'pill ' + s.state;
+    $('pillText').textContent = labels[s.state] || s.state;
+
+    if (s.bot) {
+      $('botName').textContent = s.bot.tag;
+      $('botId').textContent = 'ID ' + s.bot.id;
+      $('avatar').src = s.bot.avatar;
+      $('avatar').hidden = false;
+    } else {
+      $('botName').textContent = s.configured ? 'Bot configurado' : 'Sin bot activo';
+      $('botId').textContent = s.id ? 'ID ' + s.id : '';
+      $('avatar').hidden = true;
+    }
+
+    $('stats').hidden = s.state !== 'en_linea';
+    $('sUp').textContent = fmtUp(s.uptimeMs);
+    $('sPing').textContent = s.ping != null ? s.ping + ' ms' : '—';
+    $('sGuilds').textContent = s.guilds != null ? s.guilds : '—';
+    $('sRest').textContent = s.restarts;
+    $('lastErr').textContent = s.state === 'en_linea' ? '' : (s.lastError || '');
+    $('intentWarn').hidden = !(s.limitedIntents && s.state === 'en_linea');
+    $('actions').hidden = !s.configured;
+    $('inviteWrap').hidden = !s.inviteUrl;
+    if (s.inviteUrl) $('invite').href = s.inviteUrl;
+    $('tokenHint').textContent = s.tokenHint ? 'Token guardado (' + s.tokenHint + '). Déjalo vacío para conservarlo.' : '';
+
+    if (!formFilled && s.configured) {
+      $('id').value = s.id;
+      $('presence').value = s.presence || 'online';
+      $('activity').value = s.activityText || '';
+      formFilled = true;
+    }
+
+    $('log').innerHTML = s.logs.length
+      ? s.logs.map(l => '<li><b>' + new Date(l.t).toLocaleTimeString() + '</b> ' + l.msg.replace(/</g, '&lt;') + '</li>').join('')
+      : '<li>Sin eventos todavía.</li>';
+  } catch (e) {
+    if (e.offline) {
+      $('pill').className = 'pill error';
+      $('pillText').textContent = 'Sin conexión';
+      $('stats').hidden = true;
+      $('actions').hidden = true;
+      $('lastErr').textContent = e.message;
+    }
+  }
+}
+
+$('form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  $('btnSave').disabled = true;
+  showMsg('Validando token e ID…', 'ok');
+  try {
+    await api('/api/connect', {
+      token: $('token').value,
+      id: $('id').value,
+      presence: $('presence').value,
+      activityText: $('activity').value,
+    });
+    $('token').value = '';
+    showMsg('Listo. El bot queda activo y se mantiene en línea solo. Ahora invítalo a tu servidor con el botón verde de arriba.', 'ok');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    refresh();
+  } catch (e) {
+    showMsg(e.message, 'bad');
+  } finally {
+    $('btnSave').disabled = false;
+  }
+});
+
+$('btnCopy').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('invite').href);
+    $('btnCopy').textContent = '¡Copiado!';
+  } catch (_) {
+    prompt('Copia el link:', $('invite').href);
+  }
+  setTimeout(() => { $('btnCopy').textContent = 'Copiar link'; }, 1500);
+};
+$('btnRestart').onclick = async () => { try { await api('/api/restart', {}); refresh(); } catch (e) { showMsg(e.message, 'bad'); } };
+$('btnStop').onclick = async () => { if (confirm('¿Detener el bot?')) { await api('/api/stop', {}); refresh(); } };
+
+refresh();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>
