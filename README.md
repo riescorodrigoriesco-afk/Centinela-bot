@@ -81,3 +81,7 @@ El único comando slash es `/help`: abre un menú con la tabla de comandos y fun
 ## Panel web completo
 
 `/panel/dashboard.html` (misma contraseña) permite configurar todos los módulos de cada servidor desde el navegador: instalar, activar/desactivar, valores, filtros, canales, roles y autoroles.
+
+## Funciones extra
+
+Palabras prohibidas, tickets (botón → canal privado), roles por botones, niveles (`$rank`, `$top`) y autoroles. Se configuran en `/help` → Ajustes o en `/panel/dashboard.html`.

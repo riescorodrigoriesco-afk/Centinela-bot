@@ -9,6 +9,7 @@ const botMod = require('./bot');
 const gamesMod = require('./games');
 const guardMod = require('./guard');
 const uiMod = require('./ui');
+const extrasMod = require('./extras');
 
 // Único comando slash: /help. El resto se maneja con menús, botones y el prefijo.
 const ALL_COMMANDS = [...uiMod.commands];
@@ -201,6 +202,7 @@ async function startBot() {
     botMod.attach(c);
     guardMod.attach(c);
     uiMod.attach(c);
+    extrasMod.attach(c);
     c.on('interactionCreate', async (i) => {
       try {
         if (i.isChatInputCommand()) {
@@ -210,6 +212,7 @@ async function startBot() {
           await uiMod.handle(i);
         } else if (i.isButton()) {
           if (await guardMod.handleButton(i)) return;
+          if (await extrasMod.handleButton(i)) return;
           await gamesMod.handleButton(i);
         }
       } catch (e) {

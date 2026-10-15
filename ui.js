@@ -249,6 +249,7 @@ const MODS = [
     ],
   },
 ];
+MODS.push(...require('./extras').mods);
 const MOD = new Map(MODS.map((m) => [m.id, m]));
 
 const isOn = (cfg, m) => (m.get ? !!m.get(cfg) : m.on ? !!getPath(cfg, m.on) : null);
@@ -566,6 +567,7 @@ function parseField(f, raw) {
   const v = String(raw === undefined ? '' : raw).trim();
   if (f.t === 'int') { const n = parseInt(v, 10); return Number.isFinite(n) && n >= f.min && n <= f.max ? n : undefined; }
   if (f.t === 'choice') return f.c.includes(v.toLowerCase()) ? v.toLowerCase() : undefined;
+  if (f.t === 'list') { const a = v.split(',').map((x) => x.trim()).filter(Boolean).slice(0, f.max); return a; }
   if (f.t === 'hex') return /^#?[0-9a-f]{6}$/i.test(v) ? '#' + v.replace('#', '').toLowerCase() : undefined;
   if (f.t === 'str') {
     if (!v) return f.optional ? null : undefined;
@@ -579,8 +581,9 @@ function editModal(m, cfg, lc) {
   for (const f of m.fields) {
     const cur = getPath(cfg, f.path);
     const inp = new TextInputBuilder().setCustomId(f.k).setLabel(cut(pick(lc, f.l), 45)).setStyle(f.long ? TextInputStyle.Paragraph : TextInputStyle.Short).setRequired(!f.optional);
-    if (cur !== null && cur !== undefined && cur !== '') inp.setValue(String(cur).slice(0, f.max || 100));
+    if (cur !== null && cur !== undefined && cur !== '' && !(Array.isArray(cur) && !cur.length)) inp.setValue(String(cur).slice(0, f.t === 'list' ? 1500 : f.max || 100));
     if (f.t === 'str') inp.setMaxLength(f.max);
+    if (f.t === 'list') inp.setMaxLength(1500);
     md.addComponents(new ActionRowBuilder().addComponents(inp));
   }
   return md;
