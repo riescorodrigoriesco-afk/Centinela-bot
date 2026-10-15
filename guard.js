@@ -1523,6 +1523,18 @@ async function automod(msg, cfg) {
     return violation(msg, 'Links are not allowed', 'No se permiten enlaces');
   }
 
+  if (cfg.antiCaps.enabled && text.length >= cfg.antiCaps.minLength) {
+    const letters = text.replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ]/g, '');
+    if (letters.length >= cfg.antiCaps.minLength * 0.6) {
+      const caps = letters.replace(/[^A-ZÁÉÍÓÚÑ]/g, '').length;
+      if ((caps / letters.length) * 100 >= cfg.antiCaps.percent) return violation(msg, 'Too many capital letters', 'Demasiadas mayúsculas');
+    }
+  }
+  if (cfg.antiEmoji.enabled) {
+    const n = (text.match(/<a?:\w+:\d+>|\p{Extended_Pictographic}/gu) || []).length;
+    if (n >= cfg.antiEmoji.limit) return violation(msg, 'Too many emojis', 'Demasiados emojis');
+  }
+
   if (cfg.antiSpam.enabled && text.length >= 3) {
     const key = g.id + ':' + msg.author.id;
     const now = Date.now();
@@ -1544,7 +1556,14 @@ async function onMessage(msg) {
   const cfg = getCfg(msg.guild.id);
   const content = msg.content || '';
   const prefix = cfg.prefix || '$';
-  if (content.length > prefix.length && content.startsWith(prefix)) {
+  if (cfg.honeypot.enabled && cfg.honeypot.channel === msg.channelId && !isTrusted(msg.guild, msg.author.id, cfg) && !isStaff(msg.member)) {
+    await msg.delete().catch(() => {});
+    const act = cfg.honeypot.action;
+    const res = await punishMember(msg.guild, msg.author.id, act, 'Centinela: honeypot', 60);
+    sendLog(msg.guild, 'raid', mkEmbed(msg.guild, COLOR.red, GL(msg.guild, '🍯 Honeypot triggered', '🍯 Honeypot activado'), null, [[GL(msg.guild, 'User', 'Usuario'), '<@' + msg.author.id + '>\n`' + msg.author.id + '`'], [GL(msg.guild, 'Action', 'Acción'), res]]));
+    return;
+  }
+  if (cfg.prefixEnabled !== false && content.length > prefix.length && content.startsWith(prefix)) {
     const [first, ...args] = content.slice(prefix.length).trim().split(/\s+/);
     const cmd = BY_NAME.get(String(first).toLowerCase());
     if (cmd) {
@@ -1803,4 +1822,4 @@ function attach(client) {
   backup.startAuto(client, getCfg, saveCfg, logErr);
 }
 
-module.exports = { commands, handleButton, attach, CMDS, BY_NAME };
+module.exports = { commands, handleButton, attach, CMDS, BY_NAME, statusEmbed, health };

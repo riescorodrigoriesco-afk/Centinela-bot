@@ -61,6 +61,10 @@ function jsonStore(name, fallback) {
 /* ======================= configuración por servidor ======================= */
 const DEFAULTS = {
   prefix: '$',
+  prefixEnabled: true,
+  reports: { enabled: false, channel: null },
+  tagRole: { enabled: false, role: null },
+  dmLock: { enabled: false, hours: 24 },
   maxSecurity: true,
   exemptChannels: [],
   lockedChannels: {},
@@ -74,6 +78,10 @@ const DEFAULTS = {
   antiLink: { enabled: false, allow: ['tenor.com', 'giphy.com', 'discord.com', 'discordapp.com', 'discordapp.net'] },
   antiIpLogger: { enabled: true },
   antiEveryone: { enabled: true },
+  antiCaps: { enabled: false, percent: 70, minLength: 12 },
+  antiEmoji: { enabled: false, limit: 10 },
+  honeypot: { enabled: false, channel: null, action: 'ban' },
+  ui: { color: '#3fd0b0', lang: 'auto', ephemeral: true },
   antiMuteEvasion: { enabled: true },
   permGuard: { enabled: true },
   guildGuard: { enabled: true },

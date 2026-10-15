@@ -73,3 +73,7 @@ El bot está en línea **mientras el programa corra**, así que debe estar en un
 ## Comandos estilo RB3 Guard / XN Protect
 
 Prefijo `$` (cambia con `$setprefix`) y slash `/`: `autosetup`, `config show`, `settings`, `check`, `whitelist`, `b-create`, `b-load`, `b-auto`, `verify`, `help` y más. Primer uso: sube el rol del bot, ejecuta `$autosetup` y luego `$check`.
+
+## Panel dentro de Discord
+
+El único comando slash es `/help`: abre un menú con la tabla de comandos y funciones, **Instalar** (módulos como RaidProtect), **Ajustes** (valores y filtros por módulo), **Estado** y **Reportar**. Los comandos con prefijo siguen disponibles. Los minijuegos (`games.js`) ya no se registran como slash.

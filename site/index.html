@@ -160,7 +160,7 @@ footer.site{padding:40px 0 60px;color:var(--mute);font-size:.9rem;border-top:1px
 
 <section id="comandos"><div class="wrap">
   <h2>Comandos</h2>
-  <p class="sub">Funcionan con el prefijo <code>$</code> (cámbialo con <code>$setprefix</code>) y como comandos <code>/</code>.</p>
+  <p class="sub">El único comando <code>/</code> es <code>/help</code>: desde ahí instalas, ajustas y reportas. Estos son los comandos con prefijo <code>$</code> (cámbialo o apágalo en Ajustes).</p>
   <div class="tools">
     <input id="q" type="search" placeholder="Busca un comando" aria-label="Buscar comando">
     <div class="chips" id="chips" role="group" aria-label="Filtrar por permiso">
@@ -176,8 +176,8 @@ footer.site{padding:40px 0 60px;color:var(--mute);font-size:.9rem;border-top:1px
 </div></section>
 
 <section id="juegos"><div class="wrap">
-  <h2>Y para cuando no hay raid</h2>
-  <p class="sub">Economía y minijuegos para que el servidor tenga vida: ganas monedas, las apuestas y las gastas.</p>
+  <h2>Más funciones</h2>
+  <p class="sub">Cosas que RaidProtect no hace por sí solo y Centinela sí.</p>
   <ul class="games" id="games"><li>Cargando…</li></ul>
 </div></section>
 
@@ -188,8 +188,8 @@ footer.site{padding:40px 0 60px;color:var(--mute);font-size:.9rem;border-top:1px
     <li><div><b>Invita al bot.</b> Pulsa el botón de abajo y elige tu servidor.<br><br><a class="btn" id="invite2" href="#">Añadir a mi servidor</a></div></li>
     <li><div><b>Activa los intents.</b> En el Developer Portal, dentro de Bot, enciende <code>Server Members Intent</code> y <code>Message Content Intent</code>. Sin ellos Centinela arranca en modo limitado.</div></li>
     <li><div><b>Sube su rol.</b> En Ajustes del servidor arrastra el rol de Centinela por encima de los roles que quiera proteger.</div></li>
-    <li><div><b>Ejecuta <code>$autosetup</code>.</b> Crea los canales de logs, activa la protección y hace una primera copia. Después corre <code>$check</code> y corrige lo que salga con ❌.</div></li>
-    <li><div><b>Revisa con <code>$config show</code>.</b> Añade a tu gente de confianza con <code>$whitelist @usuario</code>.</div></li>
+    <li><div><b>Escribe <code>/help</code> y pulsa Instalar.</b> Elige los módulos (Prefijo, Auto RaidMode, Captcha, Antigüedad mínima, Anti-spam, Reportes, Rol de etiqueta, Bloqueo de MD, HoneyPot y más) y pulsa Activar. Te devuelve un resumen de lo que cambió en el servidor.</div></li>
+    <li><div><b>Afina en Ajustes.</b> Cada módulo tiene sus propios valores, filtros y selectores de canal o rol. Añade a tu gente de confianza en la Lista de confianza.</div></li>
   </ol>
 </div></section>
 
@@ -198,7 +198,7 @@ footer.site{padding:40px 0 60px;color:var(--mute);font-size:.9rem;border-top:1px
   <details><summary>¿Tiene que estar en línea todo el tiempo?</summary><p>Sí, y lo está: corre en un servidor propio con reconexión automática y un vigilante que lo reinicia si se cae más de 90 segundos.</p></details>
   <details><summary>¿Puede restaurar un servidor que ya fue borrado?</summary><p>Restaura lo que tenga en una copia. Haz una con <code>$b-create</code> y activa las automáticas; después <code>$b-load</code> la recupera.</p></details>
   <details><summary>¿Por qué no actúa sobre un usuario?</summary><p>Casi siempre es porque el rol del bot está por debajo del rol de esa persona. Súbelo en los ajustes del servidor.</p></details>
-  <details><summary>¿Son los mismos comandos que RB3 Guard o XN Protect?</summary><p>Cubrimos los mismos nombres habituales (<code>autosetup</code>, <code>config show</code>, <code>setprefix</code>, <code>whitelist</code>, <code>b-create</code>, <code>b-load</code> y más). Si echas en falta uno, dínoslo.</p></details>
+  <details><summary>¿Son los mismos comandos que RB3 Guard o XN Protect?</summary><p>Los nombres habituales (<code>autosetup</code>, <code>config show</code>, <code>setprefix</code>, <code>whitelist</code>, <code>b-create</code>, <code>b-load</code> y más) funcionan con el prefijo, y además todo se maneja con menús desde <code>/help</code>.</p></details>
   <details><summary>¿Es gratis?</summary><p>Sí. Todas las protecciones y los juegos están incluidos.</p></details>
 </div></section>
 
@@ -281,7 +281,7 @@ footer.site{padding:40px 0 60px;color:var(--mute);font-size:.9rem;border-top:1px
   }).catch(function(){
     all=fallback;render();$('#stat').textContent='No se pudo leer el estado del bot';
   });
-  var games=['Apuestas','Cara o cruz','Dados','Piedra, papel o tijera','Tragaperras','Trivia','Mayor o menor (hilo)','Tres en raya','Recompensa diaria','Trabajar','Saldo','Ranking'];
+  var games=['Restauración automática tras un nuke','Backups programados','Verificación con pregunta','Baneo global','Advertencias progresivas','Mensajes de bienvenida y despedida','Colores e idioma propios','Lista de confianza','Canales exentos','Registros por tipo','Modo pánico','Guardia de permisos'];
   $('#games').innerHTML=games.map(function(g){return '<li>'+g+'</li>'}).join('');
 })();
 </script>

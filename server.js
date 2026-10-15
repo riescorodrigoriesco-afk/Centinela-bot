@@ -8,17 +8,10 @@ const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, Message
 const botMod = require('./bot');
 const gamesMod = require('./games');
 const guardMod = require('./guard');
+const uiMod = require('./ui');
 
-// guard.js va primero: si un nombre se repite (p. ej. /help) gana la versión de guard.
-const ALL_COMMANDS = [];
-{
-  const seen = new Set();
-  for (const c of [...guardMod.commands, ...botMod.commands, ...gamesMod.commands]) {
-    if (seen.has(c.data.name)) continue;
-    seen.add(c.data.name);
-    ALL_COMMANDS.push(c);
-  }
-}
+// Único comando slash: /help. El resto se maneja con menús, botones y el prefijo.
+const ALL_COMMANDS = [...uiMod.commands];
 const COMMAND_MAP = new Map(ALL_COMMANDS.map((c) => [c.data.name, c]));
 
 const FULL_INTENTS = [
@@ -207,11 +200,14 @@ async function startBot() {
 
     botMod.attach(c);
     guardMod.attach(c);
+    uiMod.attach(c);
     c.on('interactionCreate', async (i) => {
       try {
         if (i.isChatInputCommand()) {
           const cmd = COMMAND_MAP.get(i.commandName);
           if (cmd) await cmd.execute(i);
+        } else if (i.customId && i.customId.startsWith('ui:')) {
+          await uiMod.handle(i);
         } else if (i.isButton()) {
           if (await guardMod.handleButton(i)) return;
           await gamesMod.handleButton(i);
