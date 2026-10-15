@@ -16,6 +16,7 @@ const {
   ChannelType,
   MessageFlags,
 } = require('discord.js');
+const snap = require('./snap');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
@@ -59,17 +60,31 @@ function jsonStore(name, fallback) {
 
 /* ======================= configuración por servidor ======================= */
 const DEFAULTS = {
+  prefix: '$',
+  maxSecurity: true,
+  exemptChannels: [],
+  lockedChannels: {},
   antiBotAdd: { enabled: true, punishAdder: 'ban' },
-  antiNuke: { enabled: true, limit: 3, windowSec: 10 },
+  antiNuke: { enabled: true, limit: 3, windowSec: 10, perTypeLimit: 3, perTypeWindowSec: 60, restore: true, panic: true },
   joinFlood: { enabled: true, limit: 6, windowSec: 10, action: 'kick', raidMinutes: 10 },
   minAccountAgeDays: 0,
   antiSpam: { enabled: true, limit: 7, windowSec: 5, timeoutMin: 10 },
   antiMassMention: { enabled: true, limit: 6 },
   antiInvite: { enabled: false },
+  antiLink: { enabled: false, allow: ['tenor.com', 'giphy.com', 'discord.com', 'discordapp.com', 'discordapp.net'] },
+  antiIpLogger: { enabled: true },
+  antiEveryone: { enabled: true },
+  antiMuteEvasion: { enabled: true },
+  permGuard: { enabled: true },
+  guildGuard: { enabled: true },
+  globalBan: { enabled: true },
+  autoWarn: { enabled: true, muteAt: 3, muteMin: 60, kickAt: 5, banAt: 7, expireDays: 30 },
+  verification: { enabled: false, channel: null, role: null },
+  backup: { autoHours: 0, keep: 5, lastAuto: 0 },
   whitelist: { users: [], bots: [] },
   raidUntil: 0,
   invitesWereOff: false,
-  logs: { raid: [], mod: [], welcome: [], goodbye: [] },
+  logs: { raid: [], mod: [], welcome: [], goodbye: [], messages: [], server: [] },
   welcome: { enabled: false, channel: null, message: null, dm: false, dmMessage: null },
   goodbye: { enabled: false, channel: null, message: null, dm: false, dmMessage: null },
 };
@@ -130,7 +145,27 @@ async function sendLog(guild, type, embed) {
 /* ============================ permisos ============================ */
 function isTrusted(guild, userId, cfg) {
   const c = cfg || getCfg(guild.id);
-  return userId === guild.ownerId || userId === guild.client.user.id || c.whitelist.users.includes(userId);
+  return userId === guild.ownerId || userId === guild.client.user.id || c.whitelist.users.includes(userId) || c.whitelist.bots.includes(userId);
+}
+
+/* Máxima seguridad: solo el dueño y la whitelist pueden cambiar la protección. */
+function canConfigure(guild, userId, member) {
+  const cfg = getCfg(guild.id);
+  if (userId === guild.ownerId || cfg.whitelist.users.includes(userId)) return true;
+  if (cfg.maxSecurity) return false;
+  return !!member && (member.permissions.has(P.ManageGuild) || member.permissions.has(P.Administrator));
+}
+const lockedMsg = (locale) =>
+  L(locale, '🔒 Maximum security is on: only the server owner or whitelisted users can change this.', '🔒 Máxima seguridad activa: solo el dueño del servidor o usuarios de la whitelist pueden cambiar esto.');
+
+/* Enganche para las advertencias automáticas (lo registra guard.js). */
+const hooks = { warn: null };
+function warnHook(guild, userId, reason, channel) {
+  try {
+    if (hooks.warn) Promise.resolve(hooks.warn(guild, userId, reason, channel)).catch(logErr);
+  } catch (e) {
+    logErr(e);
+  }
 }
 
 function isStaff(member) {
@@ -160,6 +195,7 @@ const INVITE_PERMS = new PermissionsBitField([
   P.BanMembers,
   P.ModerateMembers,
   P.ViewAuditLog,
+  P.ManageWebhooks,
 ]).bitfield.toString();
 
 /* ============================ acciones base ============================ */
@@ -426,28 +462,111 @@ async function sendGreeting(kind, member) {
 /* ============================ anti-nuke ============================ */
 const nukeHist = new Map();
 const seenEntries = new Set();
+const kickLookups = new Map();
 const DANGEROUS = [P.Administrator, P.ManageGuild, P.ManageRoles, P.ManageChannels, P.BanMembers, P.KickMembers, P.ManageWebhooks, P.MentionEveryone];
 
-async function nukeCheck(guild, auditType, targetId, label) {
+/* Deshace lo que destruyó el atacante: roles y canales borrados y baneos. */
+async function rollback(guild, list) {
+  const res = { roles: 0, channels: 0, unbans: 0 };
+  try {
+    const roleMap = new Map();
+    const roles = list.filter((x) => x.snap && x.snap.kind === 'role').map((x) => x.snap.data).sort((x, y) => y.position - x.position);
+    for (const s of roles) {
+      try {
+        const nr = await snap.createRoleFrom(guild, s, 'Antiraid: rollback');
+        roleMap.set(s.id, nr.id);
+        res.roles++;
+      } catch (e) {
+        logErr(e);
+      }
+    }
+    const chans = list.filter((x) => x.snap && x.snap.kind === 'channel').map((x) => x.snap.data);
+    const parentMap = new Map();
+    for (const s of chans.filter((c) => c.type === ChannelType.GuildCategory)) {
+      try {
+        const nc = await snap.createChannelFrom(guild, s, { roleMap, parentMap, reason: 'Antiraid: rollback' });
+        parentMap.set(s.id, nc.id);
+        res.channels++;
+      } catch (e) {
+        logErr(e);
+      }
+    }
+    for (const s of chans.filter((c) => c.type !== ChannelType.GuildCategory)) {
+      try {
+        await snap.createChannelFrom(guild, s, { roleMap, parentMap, reason: 'Antiraid: rollback' });
+        res.channels++;
+      } catch (e) {
+        logErr(e);
+      }
+    }
+    for (const x of list) {
+      if (x.label === 'ban' && x.targetId) {
+        try {
+          await guild.members.unban(x.targetId, 'Antiraid: rollback');
+          res.unbans++;
+        } catch (_) {}
+      }
+    }
+  } catch (e) {
+    logErr(e);
+  }
+  return res;
+}
+
+/*
+ * Registra una acción destructiva (borrar/crear canales o roles, banear, expulsar, webhooks).
+ * Devuelve { entry, exec, trusted, triggered } o null si no se pudo saber quién fue.
+ */
+async function nukeCheck(guild, auditType, targetId, label, snapshot, desc) {
   try {
     const cfg = getCfg(guild.id);
-    if (!cfg.antiNuke.enabled) return;
+    if (label === 'kick') {
+      // Evita saturar la API en servidores grandes donde salen muchos miembros a la vez
+      const t = kickLookups.get(guild.id) || { n: 0, ts: Date.now() };
+      if (Date.now() - t.ts > 10000) {
+        t.n = 0;
+        t.ts = Date.now();
+      }
+      t.n++;
+      kickLookups.set(guild.id, t);
+      if (t.n > 12) return null;
+    }
     const entry = await findAuditEntry(guild, auditType, targetId, 10000, 2);
-    if (!entry || !entry.executor) return;
-    if (seenEntries.has(entry.id)) return;
+    if (!entry || !entry.executor) return null;
+    const exec = entry.executor;
+    const trusted = isTrusted(guild, exec.id, cfg);
+    const info = { entry, exec, trusted, triggered: false };
+    if (seenEntries.has(entry.id)) return info;
     seenEntries.add(entry.id);
     setTimeout(() => seenEntries.delete(entry.id), 60000).unref();
 
-    const exec = entry.executor;
-    if (isTrusted(guild, exec.id, cfg)) return;
+    if (cfg.logs.server.length) {
+      sendLog(
+        guild,
+        'server',
+        mkEmbed(guild, COLOR.blue, GL(guild, 'Server change: ', 'Cambio en el servidor: ') + label, null, [
+          [GL(guild, 'By', 'Por'), '<@' + exec.id + '>' + (exec.bot ? ' 🤖' : '')],
+          [GL(guild, 'Target', 'Objetivo'), desc || (targetId ? '`' + targetId + '`' : '—')],
+        ])
+      );
+    }
+    if (!cfg.antiNuke.enabled || trusted) return info;
 
+    const an = cfg.antiNuke;
     const key = guild.id + ':' + exec.id;
     const now = Date.now();
-    const list = (nukeHist.get(key) || []).filter((x) => now - x.ts < cfg.antiNuke.windowSec * 1000);
-    list.push({ ts: now, label });
+    const maxWin = Math.max(an.windowSec, an.perTypeWindowSec) * 1000;
+    const list = (nukeHist.get(key) || []).filter((x) => now - x.ts < maxWin);
+    list.push({ ts: now, label, targetId, snap: snapshot || null });
     nukeHist.set(key, list);
-    if (list.length < cfg.antiNuke.limit) return;
+
+    const burst = list.filter((x) => now - x.ts < an.windowSec * 1000).length;
+    const typeLimit = /create/.test(label) ? an.perTypeLimit * 2 : an.perTypeLimit;
+    const perType = list.filter((x) => x.label === label && now - x.ts < an.perTypeWindowSec * 1000).length;
+    if (burst < an.limit && perType < typeLimit) return info;
+
     nukeHist.delete(key);
+    info.triggered = true;
 
     let res = await punishMember(guild, exec.id, 'ban', 'Antiraid: mass destructive actions');
     if (res.startsWith('failed') || res === 'none') {
@@ -462,18 +581,24 @@ async function nukeCheck(guild, auditType, targetId, label) {
         }
       }
     }
+    if (an.panic) await activateRaid(guild, GL(guild, 'Anti-nuke triggered by ' + exec.username, 'Anti-nuke activado por ' + exec.username), cfg.joinFlood.raidMinutes).catch(logErr);
+    const rb = an.restore ? await rollback(guild, list) : { roles: 0, channels: 0, unbans: 0 };
+
     sendLog(
       guild,
       'raid',
       mkEmbed(guild, COLOR.red, GL(guild, '💥 Anti-nuke triggered', '💥 Anti-nuke activado'), null, [
         [GL(guild, 'Executor', 'Autor'), '<@' + exec.id + '>\n`' + exec.id + '`' + (exec.bot ? ' (bot)' : '')],
-        [GL(guild, 'Actions', 'Acciones'), list.length + ' / ' + cfg.antiNuke.windowSec + ' s (' + [...new Set(list.map((x) => x.label))].join(', ') + ')'],
+        [GL(guild, 'Actions', 'Acciones'), list.length + ' (' + [...new Set(list.map((x) => x.label))].join(', ') + ')'],
         [GL(guild, 'Result', 'Resultado'), res],
+        [GL(guild, 'Rollback', 'Recuperación'), GL(guild, rb.channels + ' channels, ' + rb.roles + ' roles, ' + rb.unbans + ' unbans', rb.channels + ' canales, ' + rb.roles + ' roles, ' + rb.unbans + ' desbaneos')],
         [GL(guild, 'Account created', 'Cuenta creada'), '<t:' + Math.floor(exec.createdTimestamp / 1000) + ':R>'],
       ])
     );
+    return info;
   } catch (e) {
     logErr(e);
+    return null;
   }
 }
 
@@ -489,10 +614,13 @@ async function handleMessage(msg) {
   const guild = msg.guild;
   const cfg = getCfg(guild.id);
 
-  if (msg.content && msg.content.startsWith('!')) {
+  // Los comandos antiguos con "!" siguen funcionando mientras el prefijo del servidor no sea "!"
+  // (si lo es, los atiende guard.js y así no se ejecutan dos veces).
+  if (msg.content && msg.content.startsWith('!') && (cfg.prefix || '$') !== '!') {
     if (await prefixCommand(msg)) return;
   }
   if (isTrusted(guild, msg.author.id, cfg) || isStaff(msg.member)) return;
+  if (cfg.exemptChannels.includes(msg.channelId)) return;
 
   const now = Date.now();
 
@@ -500,6 +628,7 @@ async function handleMessage(msg) {
   if (cfg.antiInvite.enabled && msg.content && /(discord\.gg|discord(app)?\.com\/invite)\/[\w-]+/i.test(msg.content)) {
     await msg.delete().catch(() => {});
     modLog(guild, GL(guild, 'Invite link deleted', 'Invitación eliminada'), [[GL(guild, 'User', 'Usuario'), '<@' + msg.author.id + '>'], [GL(guild, 'Channel', 'Canal'), '<#' + msg.channelId + '>']]);
+    warnHook(guild, msg.author.id, 'invite link', msg.channel);
     return;
   }
 
@@ -510,6 +639,7 @@ async function handleMessage(msg) {
       await msg.delete().catch(() => {});
       const res = await punishMember(guild, msg.author.id, 'timeout', 'Antiraid: mass mention', cfg.antiSpam.timeoutMin);
       modLog(guild, GL(guild, 'Mass mention', 'Menciones masivas'), [[GL(guild, 'User', 'Usuario'), '<@' + msg.author.id + '>'], ['Mentions', count], [GL(guild, 'Action', 'Acción'), res]], COLOR.red);
+      warnHook(guild, msg.author.id, 'mass mention', msg.channel);
       return;
     }
   }
@@ -526,6 +656,7 @@ async function handleMessage(msg) {
       const ids = h.filter((x) => x.ch === msg.channelId).map((x) => x.id);
       await msg.channel.bulkDelete(ids, true).catch(() => {});
       modLog(guild, GL(guild, 'Spam stopped', 'Spam detenido'), [[GL(guild, 'User', 'Usuario'), '<@' + msg.author.id + '>'], [GL(guild, 'Messages', 'Mensajes'), h.length], [GL(guild, 'Action', 'Acción'), res]], COLOR.red);
+      warnHook(guild, msg.author.id, 'spam', msg.channel);
     }
   }
 }
@@ -644,6 +775,8 @@ commands.push({
     const lc = i.locale;
     const group = i.options.getSubcommandGroup(false);
     const sub = i.options.getSubcommand();
+    const readOnly = sub === 'status' || (group === 'whitelist' && sub === 'list');
+    if (!readOnly && !canConfigure(guild, i.user.id, i.member)) return say(i, lockedMsg(lc));
 
     if (group === 'whitelist') {
       if (sub === 'list') {
@@ -745,6 +878,8 @@ const LOG_TYPES = [
   { name: 'moderation', value: 'mod' },
   { name: 'welcome', value: 'welcome' },
   { name: 'goodbye', value: 'goodbye' },
+  { name: 'messages', value: 'messages' },
+  { name: 'server', value: 'server' },
 ];
 commands.push({
   data: loc(
@@ -775,6 +910,7 @@ commands.push({
     const cfg = getCfg(i.guild.id);
     const lc = i.locale;
     const sub = i.options.getSubcommand();
+    if (sub !== 'list' && !canConfigure(i.guild, i.user.id, i.member)) return say(i, lockedMsg(lc));
     if (sub === 'list') {
       const lines = Object.entries(cfg.logs).map(([k, v]) => '**' + k + ':** ' + (v.map((id) => '<#' + id + '>').join(' ') || '—'));
       return say(i, lines.join('\n'));
@@ -1040,14 +1176,14 @@ function attach(client) {
       mkEmbed(guild, COLOR.orange, GL(guild, 'Member left', 'Miembro salió'), null, [[GL(guild, 'User', 'Usuario'), (m.user ? m.user.username : '?') + '\n`' + m.id + '`'], [GL(guild, 'Members', 'Miembros'), guild.memberCount]])
     );
     if (m.user && !m.user.bot) sendGreeting('goodbye', m);
-    nukeCheck(guild, AuditLogEvent.MemberKick, m.id, 'kick');
+    nukeCheck(guild, AuditLogEvent.MemberKick, m.id, 'kick', null, m.user ? m.user.username : m.id);
   });
-  client.on('channelDelete', (ch) => ch.guild && nukeCheck(ch.guild, AuditLogEvent.ChannelDelete, ch.id, 'channel delete'));
-  client.on('channelCreate', (ch) => ch.guild && nukeCheck(ch.guild, AuditLogEvent.ChannelCreate, ch.id, 'channel create'));
-  client.on('roleDelete', (r) => nukeCheck(r.guild, AuditLogEvent.RoleDelete, r.id, 'role delete'));
-  client.on('roleCreate', (r) => nukeCheck(r.guild, AuditLogEvent.RoleCreate, r.id, 'role create'));
-  client.on('guildBanAdd', (b) => nukeCheck(b.guild, AuditLogEvent.MemberBanAdd, b.user.id, 'ban'));
-  client.on('webhooksUpdate', (ch) => ch.guild && nukeCheck(ch.guild, AuditLogEvent.WebhookCreate, null, 'webhook'));
+  client.on('channelDelete', (ch) => ch.guild && nukeCheck(ch.guild, AuditLogEvent.ChannelDelete, ch.id, 'channel delete', { kind: 'channel', data: snap.snapChannel(ch) }, '#' + ch.name));
+  client.on('channelCreate', (ch) => ch.guild && nukeCheck(ch.guild, AuditLogEvent.ChannelCreate, ch.id, 'channel create', null, '#' + ch.name));
+  client.on('roleDelete', (r) => nukeCheck(r.guild, AuditLogEvent.RoleDelete, r.id, 'role delete', { kind: 'role', data: snap.snapRole(r) }, '@' + r.name));
+  client.on('roleCreate', (r) => nukeCheck(r.guild, AuditLogEvent.RoleCreate, r.id, 'role create', null, '@' + r.name));
+  client.on('guildBanAdd', (b) => nukeCheck(b.guild, AuditLogEvent.MemberBanAdd, b.user.id, 'ban', null, b.user.username));
+  client.on('webhooksUpdate', (ch) => ch.guild && nukeCheck(ch.guild, AuditLogEvent.WebhookCreate, null, 'webhook', null, '#' + ch.name));
   client.on('messageCreate', (m) => handleMessage(m).catch(logErr));
 }
 
@@ -1058,8 +1194,35 @@ module.exports = {
   restoreRaidTimers,
   jsonStore,
   L,
+  GL,
   lang,
   fmt,
   COLOR,
   INVITE_PERMS,
+  EPHEMERAL,
+  TEXT_CHANNELS,
+  hooks,
+  guilds,
+  getCfg,
+  saveCfg,
+  sendLog,
+  mkEmbed,
+  punishMember,
+  isTrusted,
+  isStaff,
+  canAct,
+  canConfigure,
+  lockedMsg,
+  modLog,
+  doPurge,
+  doLock,
+  doIsolate,
+  findAuditEntry,
+  activateRaid,
+  endRaid,
+  say,
+  onOff,
+  sleep,
+  logErr,
+  DANGEROUS,
 };

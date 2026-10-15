@@ -63,3 +63,13 @@ El bot está en línea **mientras el programa corra**, así que debe estar en un
 - El token se guarda en `data/config.json` (permisos 600) y **nunca** se envía al navegador.
 - Usa una `PANEL_PASSWORD` fuerte y sirve el panel por HTTPS.
 - Si el token se compartió en algún lugar público, reinícialo en el Developer Portal (Bot → Reset Token).
+
+## Web y panel
+
+- `/` — web pública de Centinela (características, explorador de comandos, guía de instalación).
+- `/panel` — panel privado (usuario `admin`, clave `PANEL_PASSWORD`) para poner el token y el ID.
+- `/api/public` — estado y lista de comandos; `/health` — healthcheck.
+
+## Comandos estilo RB3 Guard / XN Protect
+
+Prefijo `$` (cambia con `$setprefix`) y slash `/`: `autosetup`, `config show`, `settings`, `check`, `whitelist`, `b-create`, `b-load`, `b-auto`, `verify`, `help` y más. Primer uso: sube el rol del bot, ejecuta `$autosetup` y luego `$check`.

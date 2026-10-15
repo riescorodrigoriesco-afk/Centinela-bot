@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Centinela</title>
+<meta name="description" content="Centinela es un bot de Discord que frena raids, nukes y spam, restaura lo que borran y además trae minijuegos y economía. Comandos tipo RB3 Guard y XN Protect.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l12 5v8c0 8-5 13-12 15C9 28 4 23 4 15V7z' fill='%233fd0b0'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --night:#0b1626; --deep:#101f35; --line:#22344f; --fog:#c9d4e3; --mute:#8ea0b8;
+  --ok:#3fd0b0; --bad:#ff5a4e; --white:#f4f7fb;
+  --head:'Bricolage Grotesque',system-ui,sans-serif; --body:'Instrument Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+html{scroll-behavior:smooth}
+body{background:var(--night);color:var(--fog);font:400 17px/1.6 var(--body);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--ok);outline-offset:3px;border-radius:4px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+h1,h2,h3{font-family:var(--head);color:var(--white);line-height:1.05;letter-spacing:-.02em}
+h1{font-size:clamp(2.6rem,7vw,5rem);font-weight:800}
+h2{font-size:clamp(1.8rem,4vw,2.8rem);font-weight:800;margin-bottom:14px}
+h3{font-size:1.15rem;font-weight:500;letter-spacing:-.01em}
+p{max-width:62ch}
+nav{display:flex;align-items:center;justify-content:space-between;padding:20px 0}
+.logo{font:800 1.3rem var(--head);color:var(--white);text-decoration:none;display:flex;gap:10px;align-items:center}
+.logo svg{width:24px;height:24px}
+nav ul{display:flex;gap:22px;list-style:none;padding:0;font-size:.95rem}
+nav ul a{text-decoration:none;color:var(--mute)}nav ul a:hover{color:var(--white)}
+.btn{display:inline-block;background:var(--ok);color:#06241d;font-weight:600;padding:13px 22px;border-radius:10px;text-decoration:none;border:0;cursor:pointer;font-size:1rem;font-family:var(--body)}
+.btn:hover{filter:brightness(1.08)}
+.btn.ghost{background:transparent;color:var(--white);border:1px solid var(--line)}
+.btn.ghost:hover{border-color:var(--mute)}
+.btn[aria-disabled=true]{opacity:.5;pointer-events:none}
+
+/* hero */
+.hero{display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;padding:56px 0 88px}
+.hero p.lead{font-size:1.2rem;margin:22px 0 30px;color:var(--fog)}
+.cta{display:flex;gap:12px;flex-wrap:wrap}
+.status{margin-top:26px;font-size:.92rem;color:var(--mute);display:flex;align-items:center;gap:8px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--mute)}
+.dot.on{background:var(--ok);box-shadow:0 0 0 4px #3fd0b022}
+
+.feed{background:var(--deep);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.feed header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-size:.9rem}
+.feed header b{color:var(--white);font-weight:600}
+.feed .count{color:var(--bad);font-weight:600}
+.feed ol{list-style:none;padding:0;height:344px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end}
+.feed li{display:flex;gap:12px;align-items:baseline;padding:9px 18px;font-size:.92rem;border-bottom:1px solid #16263d;animation:in .3s ease-out}
+.feed li .tag{flex:none;width:76px;font-weight:600}
+.feed li.bad .tag{color:var(--bad)}.feed li.ok .tag{color:var(--ok)}
+.feed li span.who{color:var(--white)}
+.feed footer{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--line)}
+.feed footer button{flex:1}
+@keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+section{padding:76px 0;border-top:1px solid var(--line)}
+section>.wrap>p.sub{color:var(--mute);margin-bottom:38px}
+
+/* módulos */
+.mods{display:grid;grid-template-columns:1fr 1fr;gap:0 56px}
+.mods div{padding:18px 0;border-bottom:1px solid var(--line)}
+.mods dt{color:var(--white);font:500 1.1rem var(--head);margin-bottom:4px}
+.mods dd{margin:0;color:var(--mute);font-size:.97rem}
+
+/* comandos */
+.tools{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.tools input{flex:1;min-width:200px;background:var(--deep);border:1px solid var(--line);color:var(--white);padding:12px 14px;border-radius:10px;font:inherit}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chips button{background:transparent;color:var(--mute);border:1px solid var(--line);padding:10px 14px;border-radius:999px;cursor:pointer;font:inherit;font-size:.92rem}
+.chips button[aria-pressed=true]{background:var(--white);color:var(--night);border-color:var(--white)}
+.cmds{list-style:none;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:0 48px}
+.cmds li{display:grid;grid-template-columns:150px 1fr;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);font-size:.96rem}
+.cmds code{color:var(--ok);font:600 .95rem ui-monospace,Menlo,monospace;word-break:break-all}
+.cmds small{display:block;color:var(--mute);font-size:.8rem;margin-top:2px}
+.empty{color:var(--mute);padding:20px 0}
+
+/* pasos */
+.steps{list-style:none;padding:0;counter-reset:s;max-width:720px}
+.steps li{counter-increment:s;display:grid;grid-template-columns:44px 1fr;padding:18px 0;border-bottom:1px solid var(--line)}
+.steps li::before{content:counter(s);font:800 1.5rem var(--head);color:var(--ok)}
+.steps b{color:var(--white);font-weight:600}
+.steps code,p code{background:var(--deep);padding:2px 7px;border-radius:6px;color:var(--white);font-size:.9em}
+
+/* juegos */
+.games{columns:3;column-gap:40px;color:var(--fog);max-width:760px;padding-left:18px}
+.games li{margin-bottom:6px}
+
+details{border-bottom:1px solid var(--line);padding:18px 0;max-width:760px}
+summary{cursor:pointer;color:var(--white);font:500 1.1rem var(--head)}
+details p{margin-top:10px;color:var(--mute)}
+footer.site{padding:40px 0 60px;color:var(--mute);font-size:.9rem;border-top:1px solid var(--line)}
+
+@media(max-width:860px){
+  .hero{grid-template-columns:1fr;padding-top:24px}
+  .mods,.cmds{grid-template-columns:1fr}
+  .games{columns:2}
+  nav ul{display:none}
+}
+@media(max-width:480px){.cmds li{grid-template-columns:1fr;gap:4px}.games{columns:1}}
+@media(prefers-reduced-motion:reduce){.feed li{animation:none}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="logo" href="#"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2l12 5v8c0 8-5 13-12 15C9 28 4 23 4 15V7z" fill="#3fd0b0"/></svg>Centinela</a>
+    <ul>
+      <li><a href="#proteccion">Protección</a></li>
+      <li><a href="#comandos">Comandos</a></li>
+      <li><a href="#empezar">Empezar</a></li>
+      <li><a href="#faq">Preguntas</a></li>
+    </ul>
+  </nav>
+
+  <div class="hero">
+    <div>
+      <h1>Que un raid no llegue a ser un problema.</h1>
+      <p class="lead">Centinela frena raids, nukes, spam y bots intrusos antes de que hagan daño, deshace lo que alcancen a borrar y mantiene tu servidor entretenido con minijuegos. Usa los mismos comandos que RB3 Guard y XN Protect.</p>
+      <div class="cta">
+        <a class="btn" id="invite" href="#empezar" aria-disabled="false">Añadir a mi servidor</a>
+        <a class="btn ghost" href="#comandos">Ver los comandos</a>
+      </div>
+      <p class="status"><span class="dot" id="dot"></span><span id="stat">Comprobando estado…</span></p>
+    </div>
+
+    <div class="feed" aria-label="Simulación de un raid en vivo">
+      <header><b>Simulación de raid</b><span>Bloqueados: <span class="count" id="blocked">0</span></span></header>
+      <ol id="log" aria-live="off"></ol>
+      <footer>
+        <button class="btn ghost" id="raid">Lanzar raid</button>
+        <button class="btn ghost" id="nuke">Intentar nuke</button>
+      </footer>
+    </div>
+  </div>
+</div>
+
+<section id="proteccion"><div class="wrap">
+  <h2>Qué vigila</h2>
+  <p class="sub">Cada módulo se enciende o apaga con un comando, y puedes dejar a salvo canales y roles de confianza.</p>
+  <dl class="mods">
+    <div><dt>Anti-nuke</dt><dd>Corta a quien borre canales o roles, o banee en masa, y restaura lo eliminado desde una captura del servidor.</dd></div>
+    <div><dt>Anti-raid</dt><dd>Detecta oleadas de ingresos y activa el modo raid: expulsa o bloquea a los nuevos hasta que pase el ataque.</dd></div>
+    <div><dt>Anti-bots</dt><dd>Nadie añade bots sin que lo apruebes. El bot intruso sale y quien lo invitó recibe sanción.</dd></div>
+    <div><dt>Antispam</dt><dd>Mensajes repetidos, ráfagas, menciones masivas, invitaciones, enlaces y robadores de IP.</dd></div>
+    <div><dt>Cuentas nuevas</dt><dd>Filtra cuentas creadas hace pocos días, el truco favorito de los raiders con alts.</dd></div>
+    <div><dt>Verificación</dt><dd>Botón y pregunta de matemáticas para dejar fuera a los bots antes de que vean tus canales.</dd></div>
+    <div><dt>Guardia de permisos</dt><dd>Avisa y revierte cuando alguien se da permisos peligrosos, y vigila cambios de nombre y webhooks.</dd></div>
+    <div><dt>Backups</dt><dd>Guarda roles y canales, restaura sin borrar nada o reconstruye todo, y hazlo cada día en automático.</dd></div>
+    <div><dt>Advertencias progresivas</dt><dd>Aviso, silencio, expulsión y baneo según cuántas faltas acumula alguien.</dd></div>
+    <div><dt>Baneo global y por ID</dt><dd>Veta a un usuario aunque todavía no esté en tu servidor.</dd></div>
+    <div><dt>Máxima seguridad</dt><dd>Un interruptor que deja la configuración solo en manos del dueño y la lista blanca.</dd></div>
+    <div><dt>Registros</dt><dd>Un canal de logs por tipo de evento para saber quién hizo qué.</dd></div>
+  </dl>
+</div></section>
+
+<section id="comandos"><div class="wrap">
+  <h2>Comandos</h2>
+  <p class="sub">Funcionan con el prefijo <code>$</code> (cámbialo con <code>$setprefix</code>) y como comandos <code>/</code>.</p>
+  <div class="tools">
+    <input id="q" type="search" placeholder="Busca un comando" aria-label="Buscar comando">
+    <div class="chips" id="chips" role="group" aria-label="Filtrar por permiso">
+      <button aria-pressed="true" data-l="">Todos</button>
+      <button aria-pressed="false" data-l="public">Cualquiera</button>
+      <button aria-pressed="false" data-l="mod">Moderadores</button>
+      <button aria-pressed="false" data-l="cfg">Configuración</button>
+      <button aria-pressed="false" data-l="owner">Dueño</button>
+    </div>
+  </div>
+  <ul class="cmds" id="cmds"></ul>
+  <p class="empty" id="empty" hidden>Ningún comando coincide con esa búsqueda.</p>
+</div></section>
+
+<section id="juegos"><div class="wrap">
+  <h2>Y para cuando no hay raid</h2>
+  <p class="sub">Economía y minijuegos para que el servidor tenga vida: ganas monedas, las apuestas y las gastas.</p>
+  <ul class="games" id="games"><li>Cargando…</li></ul>
+</div></section>
+
+<section id="empezar"><div class="wrap">
+  <h2>Ponlo a funcionar en cinco minutos</h2>
+  <p class="sub">Son pasos en orden: si te saltas el tercero, el bot no podrá actuar sobre los roles altos.</p>
+  <ol class="steps">
+    <li><div><b>Invita al bot.</b> Pulsa el botón de abajo y elige tu servidor.<br><br><a class="btn" id="invite2" href="#">Añadir a mi servidor</a></div></li>
+    <li><div><b>Activa los intents.</b> En el Developer Portal, dentro de Bot, enciende <code>Server Members Intent</code> y <code>Message Content Intent</code>. Sin ellos Centinela arranca en modo limitado.</div></li>
+    <li><div><b>Sube su rol.</b> En Ajustes del servidor arrastra el rol de Centinela por encima de los roles que quiera proteger.</div></li>
+    <li><div><b>Ejecuta <code>$autosetup</code>.</b> Crea los canales de logs, activa la protección y hace una primera copia. Después corre <code>$check</code> y corrige lo que salga con ❌.</div></li>
+    <li><div><b>Revisa con <code>$config show</code>.</b> Añade a tu gente de confianza con <code>$whitelist @usuario</code>.</div></li>
+  </ol>
+</div></section>
+
+<section id="faq"><div class="wrap">
+  <h2>Preguntas frecuentes</h2>
+  <details><summary>¿Tiene que estar en línea todo el tiempo?</summary><p>Sí, y lo está: corre en un servidor propio con reconexión automática y un vigilante que lo reinicia si se cae más de 90 segundos.</p></details>
+  <details><summary>¿Puede restaurar un servidor que ya fue borrado?</summary><p>Restaura lo que tenga en una copia. Haz una con <code>$b-create</code> y activa las automáticas; después <code>$b-load</code> la recupera.</p></details>
+  <details><summary>¿Por qué no actúa sobre un usuario?</summary><p>Casi siempre es porque el rol del bot está por debajo del rol de esa persona. Súbelo en los ajustes del servidor.</p></details>
+  <details><summary>¿Son los mismos comandos que RB3 Guard o XN Protect?</summary><p>Cubrimos los mismos nombres habituales (<code>autosetup</code>, <code>config show</code>, <code>setprefix</code>, <code>whitelist</code>, <code>b-create</code>, <code>b-load</code> y más). Si echas en falta uno, dínoslo.</p></details>
+  <details><summary>¿Es gratis?</summary><p>Sí. Todas las protecciones y los juegos están incluidos.</p></details>
+</div></section>
+
+<footer class="site"><div class="wrap">Centinela · Protección para servidores de Discord · <a href="/panel/">Panel del dueño</a></div></footer>
+
+<script>
+(function(){
+  var $=function(s){return document.querySelector(s)};
+  var invite='#empezar';
+
+  /* ---- simulación ---- */
+  var log=$('#log'),blocked=0,busy=false;
+  var names=['xX_raid_Xx','nuke_bot_7','spam4life','alt_account_3','free_nitro','j0iner_99','mass_ping','raidking','ghost_1337','tokenstealer'];
+  var good=['Marta','Diego','Luna','Pablo','Iris'];
+  function add(cls,tag,who,what){
+    var li=document.createElement('li');li.className=cls;
+    li.innerHTML='<span class="tag">'+tag+'</span><span><span class="who"></span> '+what+'</span>';
+    li.querySelector('.who').textContent=who;
+    log.appendChild(li);
+    while(log.children.length>9)log.removeChild(log.firstChild);
+  }
+  function wait(ms){return new Promise(function(r){setTimeout(r,ms)})}
+  var reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
+  var gap=reduce?0:260;
+  async function raid(){
+    if(busy)return;busy=true;
+    add('ok','Entró',good[Math.random()*5|0],'se unió al servidor');await wait(gap*2);
+    for(var i=0;i<7;i++){
+      var n=names[Math.random()*names.length|0]+(Math.random()*90|0);
+      add('bad','Bloqueado',n,i<2?'ingreso en masa detectado':i<5?'expulsado por modo raid':'cuenta de hace 2 días');
+      blocked++;$('#blocked').textContent=blocked;await wait(gap);
+    }
+    add('ok','Centinela','','modo raid activo. Servidor protegido.');busy=false;
+  }
+  async function nuke(){
+    if(busy)return;busy=true;
+    add('bad','Alerta','intruso','borró #anuncios');await wait(gap*2);
+    add('bad','Alerta','intruso','borró #general');await wait(gap*2);
+    add('ok','Centinela','intruso','baneado, permisos retirados');blocked++;$('#blocked').textContent=blocked;await wait(gap*2);
+    add('ok','Restaurado','#anuncios','vuelve con sus permisos');await wait(gap);
+    add('ok','Restaurado','#general','vuelve con sus permisos');busy=false;
+  }
+  $('#raid').onclick=raid;$('#nuke').onclick=nuke;
+  add('ok','Entró','Marta','se unió al servidor');add('ok','Entró','Diego','se unió al servidor');
+
+  /* ---- datos públicos ---- */
+  var all=[],level='',lvlName={public:'Cualquiera',mod:'Moderadores',cfg:'Configuración',owner:'Dueño',botowner:'Dueño del bot'};
+  var fallback=[['autosetup','Configura todo en un paso','cfg'],['config','Muestra la configuración','cfg'],['setprefix','Cambia el prefijo','cfg'],['whitelist','Lista blanca de confianza','cfg'],['b-create','Crea un backup','cfg'],['b-load','Restaura un backup','cfg'],['panic','Bloquea el servidor','mod'],['help','Lista de comandos','public']].map(function(a){return{name:a[0],es:a[1],level:a[2],aliases:[]}});
+  function render(){
+    var q=$('#q').value.trim().toLowerCase(),ul=$('#cmds');ul.innerHTML='';
+    var list=all.filter(function(c){
+      return (!level||c.level===level)&&(!q||c.name.indexOf(q)>-1||(c.es||'').toLowerCase().indexOf(q)>-1||c.aliases.some(function(a){return a.indexOf(q)>-1}));
+    });
+    list.forEach(function(c){
+      var li=document.createElement('li');
+      var code=document.createElement('code');code.textContent='$'+c.name;
+      var d=document.createElement('div');d.textContent=c.es;
+      var s=document.createElement('small');s.textContent=(lvlName[c.level]||'')+(c.aliases.length?' · alias: '+c.aliases.join(', '):'');
+      d.appendChild(s);li.appendChild(code);li.appendChild(d);ul.appendChild(li);
+    });
+    $('#empty').hidden=list.length>0;
+  }
+  $('#q').oninput=render;
+  $('#chips').onclick=function(e){
+    var b=e.target.closest('button');if(!b)return;
+    level=b.dataset.l;
+    [].forEach.call(this.children,function(x){x.setAttribute('aria-pressed',x===b)});
+    render();
+  };
+  function setInvite(u){
+    if(!u)return;invite=u;
+    ['#invite','#invite2'].forEach(function(s){var a=$(s);a.href=u;a.target='_blank';a.rel='noopener'});
+  }
+  fetch('/api/public').then(function(r){return r.json()}).then(function(d){
+    all=d.commands&&d.commands.length?d.commands:fallback;
+    setInvite(d.inviteUrl);
+    $('#dot').className='dot'+(d.online?' on':'');
+    $('#stat').textContent=d.online?'En línea · protegiendo '+d.guilds+' '+(d.guilds===1?'servidor':'servidores')+' · '+d.commandCount+' comandos':'El bot está desconectado ahora mismo';
+    render();
+  }).catch(function(){
+    all=fallback;render();$('#stat').textContent='No se pudo leer el estado del bot';
+  });
+  var games=['Apuestas','Cara o cruz','Dados','Piedra, papel o tijera','Tragaperras','Trivia','Mayor o menor (hilo)','Tres en raya','Recompensa diaria','Trabajar','Saldo','Ranking'];
+  $('#games').innerHTML=games.map(function(g){return '<li>'+g+'</li>'}).join('');
+})();
+</script>
+</body>
+</html>

@@ -4,11 +4,21 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { Client, GatewayIntentBits, ActivityType, REST, Routes, MessageFlags } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, ActivityType, REST, Routes, MessageFlags } = require('discord.js');
 const botMod = require('./bot');
 const gamesMod = require('./games');
+const guardMod = require('./guard');
 
-const ALL_COMMANDS = [...botMod.commands, ...gamesMod.commands];
+// guard.js va primero: si un nombre se repite (p. ej. /help) gana la versión de guard.
+const ALL_COMMANDS = [];
+{
+  const seen = new Set();
+  for (const c of [...guardMod.commands, ...botMod.commands, ...gamesMod.commands]) {
+    if (seen.has(c.data.name)) continue;
+    seen.add(c.data.name);
+    ALL_COMMANDS.push(c);
+  }
+}
 const COMMAND_MAP = new Map(ALL_COMMANDS.map((c) => [c.data.name, c]));
 
 const FULL_INTENTS = [
@@ -179,7 +189,7 @@ async function startBot() {
     log('Validando token e ID…');
     const me = await validate(config.token, config.id);
 
-    const c = new Client({ intents: limitedIntents ? LIMITED_INTENTS : FULL_INTENTS });
+    const c = new Client({ intents: limitedIntents ? LIMITED_INTENTS : FULL_INTENTS, partials: [Partials.GuildMember, Partials.Message, Partials.User] });
     client = c;
     let readyHandled = false;
     const onReady = () => {
@@ -196,12 +206,14 @@ async function startBot() {
     };
 
     botMod.attach(c);
+    guardMod.attach(c);
     c.on('interactionCreate', async (i) => {
       try {
         if (i.isChatInputCommand()) {
           const cmd = COMMAND_MAP.get(i.commandName);
           if (cmd) await cmd.execute(i);
         } else if (i.isButton()) {
+          if (await guardMod.handleButton(i)) return;
           await gamesMod.handleButton(i);
         }
       } catch (e) {
@@ -267,8 +279,27 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, bot: currentState() });
 });
 
-app.use(auth);
-app.use(express.static(path.join(__dirname, 'public')));
+// Web pública (sin contraseña) y datos públicos
+app.use(express.static(path.join(__dirname, 'site')));
+app.get('/api/public', (_req, res) => {
+  const online = client && client.isReady();
+  res.json({
+    online: !!online,
+    guilds: online ? client.guilds.cache.size : null,
+    ping: online ? client.ws.ping : null,
+    uptimeMs: readyAt ? Date.now() - readyAt : 0,
+    commandCount: ALL_COMMANDS.length,
+    prefix: '$',
+    inviteUrl: config.id
+      ? 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(config.id) + '&scope=bot%20applications.commands&permissions=' + botMod.INVITE_PERMS
+      : null,
+    commands: (guardMod.CMDS || []).filter((c) => c.d).map((c) => ({ name: c.name, en: c.d, es: c.es || c.d, level: c.level || 'public', aliases: c.aliases || [], slash: !!c.slash })),
+  });
+});
+
+// Panel privado
+app.use('/panel', auth, express.static(path.join(__dirname, 'public')));
+app.use('/api', auth);
 
 function currentState() {
   if (!config.enabled || !config.token) return 'detenido';
