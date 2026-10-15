@@ -21,10 +21,12 @@ const FULL_INTENTS = [
   GatewayIntentBits.GuildModeration,
   GatewayIntentBits.GuildWebhooks,
   GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.GuildMessageReactions,
   GatewayIntentBits.MessageContent, // privilegiado: antispam, invitaciones, comandos con !
 ];
 const LIMITED_INTENTS = [
   GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildMessageReactions,
   GatewayIntentBits.GuildModeration,
   GatewayIntentBits.GuildWebhooks,
   GatewayIntentBits.GuildMessages,
@@ -161,6 +163,18 @@ async function registerCommands(c) {
   }
 }
 
+const SITE_URL = process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://bot-activador-production.up.railway.app');
+async function setDescription(c) {
+  try {
+    const rest = new REST({ version: '10' }).setToken(config.token);
+    const description = '🛡️ Antiraid extremo, bienvenidas, autoroles, tickets y más. Usa /help y /guía.\nWeb y panel: ' + SITE_URL;
+    await rest.patch(Routes.currentApplication(), { body: { description } });
+    log('Descripción del bot actualizada con el link de la web');
+  } catch (e) {
+    log('No se pudo actualizar la descripción del bot: ' + e.message);
+  }
+}
+
 function scheduleRestart(reason) {
   if (!config.enabled || fatal) return;
   clearTimeout(retryTimer);
@@ -183,7 +197,7 @@ async function startBot() {
     log('Validando token e ID…');
     const me = await validate(config.token, config.id);
 
-    const c = new Client({ intents: limitedIntents ? LIMITED_INTENTS : FULL_INTENTS, partials: [Partials.GuildMember, Partials.Message, Partials.User] });
+    const c = new Client({ intents: limitedIntents ? LIMITED_INTENTS : FULL_INTENTS, partials: [Partials.GuildMember, Partials.Message, Partials.User, Partials.Reaction, Partials.Channel] });
     client = c;
     let readyHandled = false;
     const onReady = () => {
@@ -196,6 +210,7 @@ async function startBot() {
       log('Bot en línea como ' + c.user.tag);
       applyPresence();
       registerCommands(c);
+      setDescription(c);
       try { botMod.restoreRaidTimers(c); } catch (e) { log('restoreRaidTimers: ' + e.message); }
     };
 
@@ -210,9 +225,10 @@ async function startBot() {
           if (cmd) await cmd.execute(i);
         } else if (i.customId && i.customId.startsWith('ui:')) {
           await uiMod.handle(i);
-        } else if (i.isButton()) {
-          if (await guardMod.handleButton(i)) return;
-          if (await extrasMod.handleButton(i)) return;
+        } else if (i.isMessageComponent()) {
+          if (i.isButton() && (await guardMod.handleButton(i))) return;
+          if (await extrasMod.handleComponent(i)) return;
+          if (!i.isButton()) return;
           await gamesMod.handleButton(i);
         }
       } catch (e) {

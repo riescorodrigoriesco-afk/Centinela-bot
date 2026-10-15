@@ -202,32 +202,49 @@ const MODS = [
   {
     id: 'autorole', inst: false, ico: '🎭', n: ['Auto roles', 'Autoroles'], d: ['Give roles automatically to new members and bots (members wait for verification if Captcha is on)', 'Da roles automáticamente a nuevos miembros y bots (si el Captcha está activo, los miembros esperan a verificarse)'],
     on: ['autoRole', 'enabled'],
-    fields: [{ k: 'delay', path: ['autoRole', 'delaySec'], t: 'int', min: 0, max: 3600, l: ['Delay (seconds)', 'Retraso (segundos)'] }],
+    fields: [
+      { k: 'delay', path: ['autoRole', 'delaySec'], t: 'int', min: 0, max: 3600, l: ['Delay (seconds)', 'Retraso (segundos)'] },
+      { k: 'temp', path: ['autoRole', 'tempHours'], t: 'int', min: 0, max: 8760, l: ['Temporary role hours (0 = permanent)', 'Horas del rol temporal (0 = permanente)'] },
+    ],
     pickers: [
       { key: 'humans', type: 'role', multi: true, n: ['Roles for new members', 'Roles para nuevos miembros'], set: (c, v) => (c.autoRole.humans = v), show: (c) => c.autoRole.humans.map((i) => '<@&' + i + '>').join(' ') || '—' },
       { key: 'bots', type: 'role', multi: true, n: ['Roles for new bots', 'Roles para bots nuevos'], set: (c, v) => (c.autoRole.bots = v), show: (c) => c.autoRole.bots.map((i) => '<@&' + i + '>').join(' ') || '—' },
     ],
   },
   {
-    id: 'welcome', ico: '👋', n: ['Welcome', 'Bienvenida'], d: ['Message when someone joins. Variables: {user} {username} {server} {count}', 'Mensaje al entrar alguien. Variables: {user} {username} {server} {count}'],
+    id: 'welcome', ico: '👋', n: ['Welcome', 'Bienvenida'], d: ['Message and image when someone joins, and an optional private message. Variables: {user} {username} {server} {count}', 'Mensaje e imagen cuando alguien entra, y un mensaje privado opcional. Variables: {user} {username} {server} {count}'],
     inst: false,
     get: (c) => c.welcome.enabled,
     set: (c, v) => {
       if (v && !c.welcome.channel) throw new Error('need-channel');
       c.welcome.enabled = v;
     },
-    fields: [{ k: 'message', path: ['welcome', 'message'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Message (empty = default)', 'Mensaje (vacío = por defecto)'] }],
+    filters: [
+      { k: 'image', path: ['welcome', 'image'], n: ['Image with avatar and name', 'Imagen con avatar y nombre'] },
+      { k: 'dm', path: ['welcome', 'dm'], n: ['Also send a private message', 'Enviar también un mensaje privado'] },
+    ],
+    fields: [
+      { k: 'message', path: ['welcome', 'message'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Channel message (empty = default)', 'Mensaje del canal (vacío = por defecto)'] },
+      { k: 'dmmessage', path: ['welcome', 'dmMessage'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Private message (empty = default)', 'Mensaje privado (vacío = por defecto)'] },
+    ],
     pickers: [{ key: 'channel', type: 'channel', n: ['Welcome channel', 'Canal de bienvenida'], set: (c, v) => (c.welcome.channel = v[0]), show: (c) => (c.welcome.channel ? '<#' + c.welcome.channel + '>' : '—') }],
   },
   {
-    id: 'goodbye', ico: '😢', n: ['Goodbye', 'Despedida'], d: ['Message when someone leaves. Variables: {username} {server}', 'Mensaje al irse alguien. Variables: {username} {server}'],
+    id: 'goodbye', ico: '😢', n: ['Goodbye', 'Despedida'], d: ['Message and image when someone leaves. Variables: {username} {server} {count}', 'Mensaje e imagen cuando alguien se va. Variables: {username} {server} {count}'],
     inst: false,
     get: (c) => c.goodbye.enabled,
     set: (c, v) => {
       if (v && !c.goodbye.channel) throw new Error('need-channel');
       c.goodbye.enabled = v;
     },
-    fields: [{ k: 'message', path: ['goodbye', 'message'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Message (empty = default)', 'Mensaje (vacío = por defecto)'] }],
+    filters: [
+      { k: 'image', path: ['goodbye', 'image'], n: ['Image with avatar and name', 'Imagen con avatar y nombre'] },
+      { k: 'dm', path: ['goodbye', 'dm'], n: ['Also send a private message', 'Enviar también un mensaje privado'] },
+    ],
+    fields: [
+      { k: 'message', path: ['goodbye', 'message'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Channel message (empty = default)', 'Mensaje del canal (vacío = por defecto)'] },
+      { k: 'dmmessage', path: ['goodbye', 'dmMessage'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Private message (empty = default)', 'Mensaje privado (vacío = por defecto)'] },
+    ],
     pickers: [{ key: 'channel', type: 'channel', n: ['Goodbye channel', 'Canal de despedida'], set: (c, v) => (c.goodbye.channel = v[0]), show: (c) => (c.goodbye.channel ? '<#' + c.goodbye.channel + '>' : '—') }],
   },
   {
@@ -356,9 +373,7 @@ async function giveAutoRoles(member) {
   const ids = member.user.bot ? ar.bots : cfg.verification.enabled ? [] : ar.humans;
   if (!ids.length) return;
   if (ar.delaySec > 0) await new Promise((r) => setTimeout(r, ar.delaySec * 1000));
-  const top = g.members.me.roles.highest;
-  const ok = ids.filter((id) => { const r = g.roles.cache.get(id); return r && !r.managed && r.comparePositionTo(top) < 0; });
-  if (ok.length) await member.roles.add(ok, 'Centinela: autorole').catch(() => {});
+  await require('./extras').giveRoles(member, ids, ar.tempHours, 'Centinela: autorole');
 }
 
 /* ============================ instalación ============================ */

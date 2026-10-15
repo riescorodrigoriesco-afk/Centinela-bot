@@ -66,10 +66,10 @@ const DEFAULTS = {
   tagRole: { enabled: false, role: null },
   dmLock: { enabled: false, hours: 24 },
   badWords: { enabled: false, words: [], action: 'delete' },
-  tickets: { enabled: false, channel: null, staffRole: null },
-  rolePanel: { channel: null, roles: [] },
-  levels: { enabled: false, announce: true, xpMin: 15, xpMax: 25, cooldownSec: 60 },
-  autoRole: { enabled: false, humans: [], bots: [], delaySec: 0 },
+  tickets: { enabled: false, channel: null, staffRole: null, logChannel: null, categories: [], perUser: 1 },
+  rolePanel: { channel: null, roles: [], mode: 'buttons', emojis: [], tempHours: 0, reactionMsg: null, reactionMap: {} },
+  levels: { enabled: false, announce: true, xpMin: 15, xpMax: 25, cooldownSec: 60, rewards: [], activityRole: null, activityMessages: 0 },
+  autoRole: { enabled: false, humans: [], bots: [], delaySec: 0, tempHours: 0 },
   maxSecurity: true,
   exemptChannels: [],
   lockedChannels: {},
@@ -98,8 +98,8 @@ const DEFAULTS = {
   raidUntil: 0,
   invitesWereOff: false,
   logs: { raid: [], mod: [], welcome: [], goodbye: [], messages: [], server: [] },
-  welcome: { enabled: false, channel: null, message: null, dm: false, dmMessage: null },
-  goodbye: { enabled: false, channel: null, message: null, dm: false, dmMessage: null },
+  welcome: { enabled: false, channel: null, message: null, dm: false, dmMessage: null, image: false },
+  goodbye: { enabled: false, channel: null, message: null, dm: false, dmMessage: null, image: false },
 };
 
 const guilds = jsonStore('guilds.json', () => ({}));
@@ -464,7 +464,14 @@ async function sendGreeting(kind, member) {
       : GL(guild, 'Sorry to see you go from **{server}**.', 'Lamentamos que te vayas de **{server}**.');
     if (g.channel) {
       const ch = guild.channels.cache.get(g.channel) || (await guild.channels.fetch(g.channel).catch(() => null));
-      if (ch && ch.isTextBased()) await ch.send({ content: fmt(g.message || defMsg, vars), allowedMentions: { users: [member.id] } }).catch(() => {});
+      if (ch && ch.isTextBased()) {
+        const payload = { content: fmt(g.message || defMsg, vars), allowedMentions: { users: [member.id] } };
+        if (g.image) {
+          const png = await require('./card').make({ title: w ? GL(guild, 'Welcome!', '¡Bienvenido!') : GL(guild, 'Goodbye', 'Hasta luego'), name: member.user.username, sub: guild.name + ' · #' + guild.memberCount, avatar: member.user.displayAvatarURL({ extension: 'png', size: 256 }), color: getCfg(guild.id).ui.color });
+          if (png) payload.files = [{ attachment: png, name: (w ? 'welcome' : 'goodbye') + '.png' }];
+        }
+        await ch.send(payload).catch(() => {});
+      }
     }
     if (g.dm) await member.send(fmt(g.dmMessage || defDm, vars)).catch(() => {});
   } catch (e) {
