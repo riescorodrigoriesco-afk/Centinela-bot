@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Centinela · Panel</title>
+<style>
+:root{--night:#0b1626;--deep:#101f35;--line:#22344f;--fog:#c9d4e3;--mute:#8ea0b8;--ok:#3fd0b0;--bad:#ff5a4e;--white:#f4f7fb}
+*{box-sizing:border-box;margin:0}
+body{background:var(--night);color:var(--fog);font:16px/1.5 system-ui,sans-serif}
+a{color:var(--ok)}
+:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+.app{display:grid;grid-template-columns:270px 1fr;min-height:100vh}
+aside{background:var(--deep);border-right:1px solid var(--line);padding:16px;overflow:auto;max-height:100vh;position:sticky;top:0}
+aside h2{font-size:.8rem;color:var(--mute);font-weight:600;margin:16px 0 6px}
+aside button.item{display:flex;gap:8px;width:100%;text-align:left;background:none;border:0;color:var(--fog);padding:8px 10px;border-radius:8px;cursor:pointer;font:inherit}
+aside button.item:hover{background:#16294a}
+aside button.item[aria-current=true]{background:#1b3358;color:var(--white)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--line);margin-top:8px;flex:none}.dot.on{background:var(--ok)}
+select.srv{width:100%;background:var(--night);color:var(--white);border:1px solid var(--line);padding:10px;border-radius:8px;font:inherit}
+main{padding:28px;max-width:820px}
+h1{color:var(--white);font-size:1.6rem;margin-bottom:4px}
+.sub{color:var(--mute);margin-bottom:22px}
+.card{background:var(--deep);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.card h3{color:var(--white);font-size:1rem;margin-bottom:12px}
+label{display:block;font-size:.9rem;margin:10px 0 4px;color:var(--fog)}
+input[type=text],input[type=number],select,textarea{width:100%;background:var(--night);color:var(--white);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font:inherit}
+textarea{min-height:90px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.btn{background:var(--ok);color:#06241d;border:0;border-radius:8px;padding:10px 16px;font:600 .95rem system-ui;cursor:pointer}
+.btn.sec{background:transparent;color:var(--white);border:1px solid var(--line)}
+.btn.bad{background:var(--bad);color:#fff}
+.check{display:flex;gap:10px;align-items:center;padding:6px 0}
+.check input{width:18px;height:18px;accent-color:var(--ok)}
+.toast{position:fixed;bottom:18px;right:18px;background:var(--white);color:#0b1626;padding:12px 16px;border-radius:10px;max-width:340px;box-shadow:0 8px 30px #0008}
+.err{color:var(--bad)}
+pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;border:1px solid var(--line)}
+@media(max-width:760px){.app{grid-template-columns:1fr}aside{position:static;max-height:none}main{padding:18px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <a href="index.html">← Token y estado</a>
+    <h2>Servidor</h2>
+    <select class="srv" id="srv" aria-label="Servidor"></select>
+    <h2>Módulos</h2>
+    <div id="nav"></div>
+  </aside>
+  <main id="main"><p class="sub">Cargando…</p></main>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script>
+(function(){
+  var $=function(s){return document.querySelector(s)};
+  var G=null,cur='home';
+  function api(m,u,b){return fetch(u,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'Error');return j})})}
+  function toast(t,bad){var e=$('#toast');e.textContent=t;e.className='toast'+(bad?' err':'');e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(function(){e.hidden=true},3500)}
+  function el(tag,attrs,kids){var e=document.createElement(tag);for(var k in (attrs||{})){if(k==='text')e.textContent=attrs[k];else if(k==='on')for(var ev in attrs.on)e.addEventListener(ev,attrs.on[ev]);else e.setAttribute(k,attrs[k])}(kids||[]).forEach(function(c){if(c)e.appendChild(c)});return e}
+
+  function loadGuilds(){
+    api('GET','/api/guilds').then(function(l){
+      var s=$('#srv');s.innerHTML='';
+      if(!l.length){$('#main').innerHTML='';$('#main').appendChild(el('p',{class:'sub',text:'El bot no está en línea o no está en ningún servidor. Conéctalo en la página de token e invítalo a tu servidor.'}));return}
+      l.forEach(function(g){s.appendChild(el('option',{value:g.id,text:g.name+' ('+g.members+')'}))});
+      s.onchange=function(){load(s.value)};load(s.value);
+    }).catch(function(e){$('#main').textContent=e.message});
+  }
+  function load(id){api('GET','/api/guild/'+id).then(function(g){G=g;nav();show(cur)}).catch(function(e){toast(e.message,1)})}
+  function nav(){
+    var n=$('#nav');n.innerHTML='';
+    n.appendChild(item('home','🏠','Inicio e instalación',null));
+    G.mods.forEach(function(m){n.appendChild(item(m.id,m.ico,m.n,m.on))});
+  }
+  function item(id,ico,name,on){
+    var b=el('button',{class:'item','aria-current':String(cur===id),on:{click:function(){cur=id;nav();show(id)}}},[
+      on===null?el('span',{class:'dot',style:'opacity:.3'}):el('span',{class:'dot'+(on?' on':'')}),el('span',{text:ico+' '+name})]);
+    return b;
+  }
+  function show(id){
+    var m=$('#main');m.innerHTML='';
+    if(id==='home')return home(m);
+    var mod=G.mods.find(function(x){return x.id===id});if(mod)modView(m,mod);
+  }
+  function home(m){
+    m.appendChild(el('h1',{text:G.name}));
+    m.appendChild(el('p',{class:'sub',text:G.members+' miembros · '+G.mods.filter(function(x){return x.on}).length+' módulos activos'}));
+    var c=el('div',{class:'card'});c.appendChild(el('h3',{text:'Instalar módulos'}));
+    c.appendChild(el('p',{class:'sub',text:'Marca lo que quieras activar. Se crean los canales y roles necesarios y se enciende cada función.'}));
+    var boxes={};
+    G.mods.filter(function(x){return x.installable}).forEach(function(x){
+      var cb=el('input',{type:'checkbox',checked:'checked'});boxes[x.id]=cb;
+      c.appendChild(el('label',{class:'check'},[cb,el('span',{text:x.ico+' '+x.n+' — '+x.d})]));
+    });
+    var out=el('pre',{hidden:'hidden'});
+    c.appendChild(el('div',{class:'row',style:'margin-top:12px'},[el('button',{class:'btn',text:'Instalar seleccionados',on:{click:function(ev){
+      ev.target.disabled=true;var ids=Object.keys(boxes).filter(function(k){return boxes[k].checked});
+      api('POST','/api/guild/'+G.id+'/install',{ids:ids}).then(function(r){out.textContent=r.summary;out.hidden=false;load(G.id)}).catch(function(e){toast(e.message,1)}).then(function(){ev.target.disabled=false});
+    }}})]));
+    c.appendChild(out);m.appendChild(c);
+  }
+  function modView(m,mod){
+    m.appendChild(el('h1',{text:mod.ico+' '+mod.n}));
+    m.appendChild(el('p',{class:'sub',text:mod.d}));
+    var card=el('div',{class:'card'});
+    var onBox=null;
+    if(mod.on!==null){onBox=el('input',{type:'checkbox'});onBox.checked=!!mod.on;card.appendChild(el('label',{class:'check'},[onBox,el('span',{text:'Módulo activado'})]))}
+    var fin={},fil={},pin={};
+    mod.fields.forEach(function(f){
+      var inp;
+      if(f.t==='choice'){inp=el('select');f.c.forEach(function(o){var op=el('option',{value:o,text:o});if(String(f.value)===o)op.selected=true;inp.appendChild(op)})}
+      else if(f.long){inp=el('textarea');inp.value=f.value||''}
+      else{inp=el('input',{type:f.t==='int'?'number':'text'});inp.value=f.value==null?'':f.value;if(f.t==='int'){inp.min=f.min;inp.max=f.max}}
+      fin[f.k]=inp;card.appendChild(el('label',{text:f.l}));card.appendChild(inp);
+    });
+    if(mod.filters.length){card.appendChild(el('label',{text:'Filtros'}));mod.filters.forEach(function(f){var cb=el('input',{type:'checkbox'});cb.checked=f.value;fil[f.k]=cb;card.appendChild(el('label',{class:'check'},[cb,el('span',{text:f.n})]))})}
+    mod.pickers.forEach(function(p){
+      card.appendChild(el('label',{text:p.n+(p.shown&&p.shown!=='—'?'  (ahora: '+p.shown+')':'')}));
+      if(p.type==='user'){var t=el('input',{type:'text',placeholder:'IDs separados por coma'});pin[p.key]=t;card.appendChild(t);return}
+      var sel=el('select');if(p.multi)sel.multiple=true;
+      var list=p.type==='role'?G.roles:G.channels;
+      if(!p.multi)sel.appendChild(el('option',{value:'',text:'— sin cambios —'}));
+      list.forEach(function(x){sel.appendChild(el('option',{value:x.id,text:(p.type==='role'?'@':'#')+x.name}))});
+      pin[p.key]=sel;card.appendChild(sel);
+    });
+    var res=el('p',{class:'err'});
+    card.appendChild(el('div',{class:'row',style:'margin-top:14px'},[el('button',{class:'btn',text:'Guardar',on:{click:function(){
+      var body={fields:{},filters:{},pickers:{}};
+      if(onBox)body.on=onBox.checked;
+      Object.keys(fin).forEach(function(k){body.fields[k]=fin[k].value});
+      Object.keys(fil).forEach(function(k){body.filters[k]=fil[k].checked});
+      Object.keys(pin).forEach(function(k){var e=pin[k];var v=e.tagName==='SELECT'?[].filter.call(e.options,function(o){return o.selected&&o.value}).map(function(o){return o.value}):e.value.split(/[\s,]+/).filter(Boolean);if(v.length)body.pickers[k]=v});
+      api('POST','/api/guild/'+G.id+'/mod/'+mod.id,body).then(function(r){
+        res.textContent=r.errors.length?'No se pudo guardar: '+r.errors.join(', '):'';
+        toast(r.errors.length?'Revisa los avisos':'Guardado',r.errors.length>0);load(G.id);
+      }).catch(function(e){toast(e.message,1)});
+    }}})].concat(mod.acts.map(function(a){return el('button',{class:'btn sec',text:a.n,on:{click:function(){
+      api('POST','/api/guild/'+G.id+'/act/'+mod.id+'/'+a.key).then(function(r){toast(r.note);load(G.id)}).catch(function(e){toast(e.message,1)});
+    }}})}))));
+    card.appendChild(res);m.appendChild(card);
+  }
+  loadGuilds();
+})();
+</script>
+</body>
+</html>

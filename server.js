@@ -268,7 +268,7 @@ setInterval(applyPresence, 10 * 60 * 1000);
 
 /* ---------- API ---------- */
 const app = express();
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '50kb' }));
 
 // Sin autenticación: para servicios de monitoreo (UptimeRobot, etc.)
 app.get('/health', (_req, res) => {
@@ -379,6 +379,24 @@ app.post('/api/restart', (_req, res) => {
   startBot();
   res.json({ ok: true });
 });
+
+/* ---------- Panel completo de configuración (protegido por /api auth) ---------- */
+function guildOf(req, res) {
+  const g = client && client.isReady() ? client.guilds.cache.get(req.params.id) : null;
+  if (!g) res.status(404).json({ error: 'Servidor no encontrado o el bot está desconectado.' });
+  return g;
+}
+const wrap = (fn) => async (req, res) => {
+  try { await fn(req, res); } catch (e) { res.status(400).json({ error: e.message }); }
+};
+app.get('/api/guilds', (_req, res) => {
+  if (!client || !client.isReady()) return res.json([]);
+  res.json(client.guilds.cache.map((g) => ({ id: g.id, name: g.name, icon: g.iconURL({ size: 64 }), members: g.memberCount })));
+});
+app.get('/api/guild/:id', wrap(async (req, res) => { const g = guildOf(req, res); if (g) res.json(uiMod.webGuild(g)); }));
+app.post('/api/guild/:id/mod/:mod', wrap(async (req, res) => { const g = guildOf(req, res); if (g) res.json(await uiMod.webApply(g, req.params.mod, req.body || {})); }));
+app.post('/api/guild/:id/act/:mod/:key', wrap(async (req, res) => { const g = guildOf(req, res); if (g) res.json(await uiMod.webAct(g, req.params.mod, req.params.key)); }));
+app.post('/api/guild/:id/install', wrap(async (req, res) => { const g = guildOf(req, res); if (g) res.json(await uiMod.webInstall(g, (req.body || {}).ids)); }));
 
 app.listen(PORT, () => {
   console.log('Panel listo en el puerto ' + PORT);

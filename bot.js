@@ -65,6 +65,7 @@ const DEFAULTS = {
   reports: { enabled: false, channel: null },
   tagRole: { enabled: false, role: null },
   dmLock: { enabled: false, hours: 24 },
+  autoRole: { enabled: false, humans: [], bots: [], delaySec: 0 },
   maxSecurity: true,
   exemptChannels: [],
   lockedChannels: {},

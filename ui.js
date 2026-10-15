@@ -200,6 +200,15 @@ const MODS = [
     acts: [{ key: 'create', n: ['Create log channels', 'Crear canales de registros'], run: async (x) => '✅ ' + (await makeLogs(x.g, x.cfg)) }],
   },
   {
+    id: 'autorole', inst: false, ico: '🎭', n: ['Auto roles', 'Autoroles'], d: ['Give roles automatically to new members and bots (members wait for verification if Captcha is on)', 'Da roles automáticamente a nuevos miembros y bots (si el Captcha está activo, los miembros esperan a verificarse)'],
+    on: ['autoRole', 'enabled'],
+    fields: [{ k: 'delay', path: ['autoRole', 'delaySec'], t: 'int', min: 0, max: 3600, l: ['Delay (seconds)', 'Retraso (segundos)'] }],
+    pickers: [
+      { key: 'humans', type: 'role', multi: true, n: ['Roles for new members', 'Roles para nuevos miembros'], set: (c, v) => (c.autoRole.humans = v), show: (c) => c.autoRole.humans.map((i) => '<@&' + i + '>').join(' ') || '—' },
+      { key: 'bots', type: 'role', multi: true, n: ['Roles for new bots', 'Roles para bots nuevos'], set: (c, v) => (c.autoRole.bots = v), show: (c) => c.autoRole.bots.map((i) => '<@&' + i + '>').join(' ') || '—' },
+    ],
+  },
+  {
     id: 'welcome', ico: '👋', n: ['Welcome', 'Bienvenida'], d: ['Message when someone joins. Variables: {user} {username} {server} {count}', 'Mensaje al entrar alguien. Variables: {user} {username} {server} {count}'],
     inst: false,
     get: (c) => c.welcome.enabled,
@@ -337,6 +346,20 @@ async function syncAllTags(g) {
   return n;
 }
 
+/* ---------- autoroles ---------- */
+async function giveAutoRoles(member) {
+  const g = member.guild;
+  const cfg = getCfg(g.id);
+  const ar = cfg.autoRole;
+  if (!ar.enabled) return;
+  const ids = member.user.bot ? ar.bots : cfg.verification.enabled ? [] : ar.humans;
+  if (!ids.length) return;
+  if (ar.delaySec > 0) await new Promise((r) => setTimeout(r, ar.delaySec * 1000));
+  const top = g.members.me.roles.highest;
+  const ok = ids.filter((id) => { const r = g.roles.cache.get(id); return r && !r.managed && r.comparePositionTo(top) < 0; });
+  if (ok.length) await member.roles.add(ok, 'Centinela: autorole').catch(() => {});
+}
+
 /* ============================ instalación ============================ */
 const INSTALLABLE = MODS.filter((m) => m.inst !== false);
 const instSel = new Map(); // guild:user -> Set(ids)
@@ -400,9 +423,9 @@ function installView(i, cfg, lc) {
   };
 }
 
-async function runInstall(i, cfg, lc) {
+async function runInstall(i, cfg, lc, selOverride) {
   const g = i.guild;
-  const sel = instSel.get(selKey(i)) || new Set(INSTALLABLE.map((m) => m.id));
+  const sel = selOverride || instSel.get(selKey(i)) || new Set(INSTALLABLE.map((m) => m.id));
   const lines = [];
   for (const m of INSTALLABLE) {
     if (!sel.has(m.id)) continue;
@@ -734,6 +757,7 @@ const helpCommand = {
 function attach(client) {
   const tagSeen = new Map();
   client.on('guildMemberAdd', (m) => syncTag(m, getCfg(m.guild.id)).catch(logErr));
+  client.on('guildMemberAdd', (m) => giveAutoRoles(m).catch(logErr));
   client.on('guildMemberUpdate', (a, b) => syncTag(b, getCfg(b.guild.id)).catch(logErr));
   client.on('messageCreate', (msg) => {
     if (!msg.guild || !msg.member || msg.author.bot) return;
@@ -753,4 +777,73 @@ function attach(client) {
   if (t.unref) t.unref();
 }
 
-module.exports = { commands: [helpCommand], handle, attach, MODS };
+
+/* ============================ API web (panel completo) ============================ */
+const WL = 'es';
+function serializeMod(g, cfg, m) {
+  return {
+    id: m.id, ico: m.ico, n: pick(WL, m.n), d: pick(WL, m.d), installable: m.inst !== false,
+    on: isOn(cfg, m),
+    fields: (m.fields || []).map((f) => ({ k: f.k, l: pick(WL, f.l), t: f.t, c: f.c || null, min: f.min, max: f.max, long: !!f.long, value: getPath(cfg, f.path) })),
+    filters: (m.filters || []).map((f) => ({ k: f.k, n: pick(WL, f.n), value: !!getPath(cfg, f.path) })),
+    pickers: (m.pickers || []).map((p) => ({ key: p.key, type: p.type, multi: !!p.multi, n: pick(WL, p.n), shown: p.show(cfg).replace(/<[#@&]+(\d+)>/g, '$1') })),
+    acts: (m.acts || []).map((a) => ({ key: a.key, n: pick(WL, a.n) })),
+  };
+}
+function webGuild(g) {
+  const cfg = getCfg(g.id);
+  return {
+    id: g.id, name: g.name, icon: g.iconURL ? g.iconURL({ size: 64 }) : null, members: g.memberCount,
+    channels: g.channels.cache.filter((c) => c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement).map((c) => ({ id: c.id, name: c.name })),
+    roles: g.roles.cache.filter((r) => r.id !== g.id && !r.managed).sort((a, b) => b.position - a.position).map((r) => ({ id: r.id, name: r.name })),
+    mods: MODS.map((m) => serializeMod(g, cfg, m)),
+  };
+}
+async function webApply(g, modId, body) {
+  const m = MOD.get(modId);
+  if (!m) throw new Error('Módulo desconocido');
+  const cfg = getCfg(g.id);
+  const errs = [];
+  for (const [k, raw] of Object.entries(body.fields || {})) {
+    const f = (m.fields || []).find((x) => x.k === k);
+    if (!f) continue;
+    const v = parseField(f, raw);
+    if (v === undefined) errs.push(pick(WL, f.l)); else setPath(cfg, f.path, v);
+  }
+  for (const [k, v] of Object.entries(body.filters || {})) {
+    const f = (m.filters || []).find((x) => x.k === k);
+    if (f) setPath(cfg, f.path, !!v);
+  }
+  for (const [k, v] of Object.entries(body.pickers || {})) {
+    const p = (m.pickers || []).find((x) => x.key === k);
+    const ids = (Array.isArray(v) ? v : [v]).filter((x) => /^\d{15,25}$/.test(String(x))).map(String);
+    if (p && ids.length) p.set(cfg, p.multi ? ids : [ids[0]], { resolved: g.client.users.cache });
+  }
+  if (typeof body.on === 'boolean') {
+    try {
+      if (m.id === 'dmlock') await applyDmLock(g, body.on, cfg.dmLock.hours);
+      setOn(cfg, m, body.on);
+    } catch (e) {
+      errs.push({ 'need-channel': 'Primero elige un canal', 'need-role': 'Primero elige un rol', 'need-verify': 'Primero elige canal y rol' }[e.message] || e.message);
+    }
+  }
+  saveCfg();
+  return { mod: serializeMod(g, cfg, m), errors: errs };
+}
+async function webAct(g, modId, key) {
+  const m = MOD.get(modId);
+  const a = m && (m.acts || []).find((x) => x.key === key);
+  if (!a) throw new Error('Acción desconocida');
+  const cfg = getCfg(g.id);
+  const note = await a.run({ i: { user: { id: 'web' } }, g, cfg, lc: WL });
+  saveCfg();
+  return { note: String(note).replace(/<[#@&]+(\d+)>/g, '$1'), mod: serializeMod(g, cfg, m) };
+}
+async function webInstall(g, ids) {
+  const cfg = getCfg(g.id);
+  const sel = new Set((ids && ids.length ? ids : INSTALLABLE.map((m) => m.id)).filter((id) => INSTALLABLE.some((m) => m.id === id)));
+  const e = await runInstall({ guild: g, user: { id: 'web' } }, cfg, WL, sel);
+  return { summary: e.data.description };
+}
+
+module.exports = { webGuild, webApply, webAct, webInstall, commands: [helpCommand], handle, attach, MODS };
