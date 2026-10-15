@@ -85,3 +85,5 @@ El único comando slash es `/help`: abre un menú con la tabla de comandos y fun
 ## Funciones extra
 
 Palabras prohibidas, tickets (botón → canal privado), roles por botones, niveles (`$rank`, `$top`) y autoroles. Se configuran en `/help` → Ajustes o en `/panel/dashboard.html`.
+
+`/guía` muestra un panel con todos los comandos con prefijo, por categorías.

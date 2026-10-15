@@ -112,6 +112,7 @@ footer.site{padding:40px 0 60px;color:var(--mute);font-size:.9rem;border-top:1px
     <ul>
       <li><a href="#proteccion">Protección</a></li>
       <li><a href="#comandos">Comandos</a></li>
+      <li><a href="/panel/dashboard.html">Panel</a></li>
       <li><a href="#empezar">Empezar</a></li>
       <li><a href="#faq">Preguntas</a></li>
     </ul>
@@ -155,12 +156,29 @@ footer.site{padding:40px 0 60px;color:var(--mute);font-size:.9rem;border-top:1px
     <div><dt>Baneo global y por ID</dt><dd>Veta a un usuario aunque todavía no esté en tu servidor.</dd></div>
     <div><dt>Máxima seguridad</dt><dd>Un interruptor que deja la configuración solo en manos del dueño y la lista blanca.</dd></div>
     <div><dt>Registros</dt><dd>Un canal de logs por tipo de evento para saber quién hizo qué.</dd></div>
+    <div><dt>Autoroles</dt><dd>Roles automáticos para miembros nuevos y otros distintos para bots, con retraso opcional.</dd></div>
+    <div><dt>Bienvenidas</dt><dd>Mensaje de bienvenida en el canal que elijas, con tu texto y variables como el nombre y el número de miembro.</dd></div>
+    <div><dt>Despedidas</dt><dd>Aviso cuando alguien se va, con tu propio mensaje.</dd></div>
+    <div><dt>Tickets</dt><dd>Un botón abre un canal privado entre el miembro y tu equipo, que cualquiera de los dos puede cerrar.</dd></div>
+    <div><dt>Roles por botones</dt><dd>Los miembros eligen sus roles pulsando botones. Los roles con permisos peligrosos se rechazan.</dd></div>
+    <div><dt>Niveles</dt><dd>XP por chatear, subidas de nivel anunciadas, y <code>$rank</code> y <code>$top</code> para verlos.</dd></div>
+    <div><dt>Palabras prohibidas</dt><dd>Borra mensajes con tu lista de palabras y, si quieres, silencia o expulsa.</dd></div>
+    <div><dt>Reportes</dt><dd>Los miembros reportan a alguien y tu equipo decide con un botón.</dd></div>
+    <div><dt>HoneyPot y bloqueo de MD</dt><dd>Un canal trampa que sanciona a los bots, y cierre de mensajes directos del servidor contra estafas.</dd></div>
+    <div><dt>Rol de etiqueta</dt><dd>Da un rol a quien lleve la etiqueta de tu servidor.</dd></div>
   </dl>
+</div></section>
+
+<section id="panelweb"><div class="wrap">
+  <h2>Panel web para configurar todo</h2>
+  <p class="sub">Sin comandos: eliges el servidor, ajustas cada módulo y guardas.</p>
+  <p>Desde el panel instalas los módulos de una vez, y en cada uno cambias valores, filtros, canales y roles: autoroles, bienvenidas, despedidas, tickets, niveles, anti-raid y todo lo demás. También puedes hacerlo dentro de Discord con <code>/help</code>, y ver todos los comandos con prefijo en <code>/guía</code>.</p>
+  <p style="margin-top:22px"><a class="btn" href="/panel/dashboard.html">Abrir el panel</a></p>
 </div></section>
 
 <section id="comandos"><div class="wrap">
   <h2>Comandos</h2>
-  <p class="sub">El único comando <code>/</code> es <code>/help</code>: desde ahí instalas, ajustas y reportas. Estos son los comandos con prefijo <code>$</code> (cámbialo o apágalo en Ajustes).</p>
+  <p class="sub">Los comandos <code>/</code> son <code>/help</code> (instalar, ajustar, reportar) y <code>/guía</code> (esta lista). Estos son los comandos con prefijo <code>$</code> (cámbialo o apágalo en Ajustes).</p>
   <div class="tools">
     <input id="q" type="search" placeholder="Busca un comando" aria-label="Buscar comando">
     <div class="chips" id="chips" role="group" aria-label="Filtrar por permiso">

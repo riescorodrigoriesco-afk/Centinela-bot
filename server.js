@@ -11,7 +11,7 @@ const guardMod = require('./guard');
 const uiMod = require('./ui');
 const extrasMod = require('./extras');
 
-// Único comando slash: /help. El resto se maneja con menús, botones y el prefijo.
+// Comandos slash: /help y /guía. El resto se maneja con menús, botones y el prefijo.
 const ALL_COMMANDS = [...uiMod.commands];
 const COMMAND_MAP = new Map(ALL_COMMANDS.map((c) => [c.data.name, c]));
 

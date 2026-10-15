@@ -652,6 +652,7 @@ async function handle(i) {
   const act = parts[1];
 
   // Acceso libre: ayuda, reportar
+  if (act === 'gcat') return i.update(guidePayload(cfg, lc, i.values[0]));
   if (act === 'cat') return i.update(home(i, cfg, lc, i.values[0]));
   if (act === 'home') return i.update(home(i, cfg, lc, 'home'));
   if (act === 'report') return i.showModal(reportModal(lc));
@@ -756,6 +757,44 @@ const helpCommand = {
   },
 };
 
+
+/* ============================ /guía: panel de comandos con prefijo ============================ */
+const GCATS = [['home', '📖', ['Overview', 'Resumen']], ['antiraid', '🛡️', ['Antiraid & setup', 'Antiraid y configuración']], ['mod', '🔨', ['Moderation', 'Moderación']], ['warn', '⚠️', ['Warnings', 'Advertencias']], ['backup', '💾', ['Backups', 'Backups']], ['general', '✅', ['General & levels', 'General y niveles']]];
+function guidePayload(cfg, lc, cat = 'home') {
+  const p = cfg.prefix || '$';
+  const color = colorOf(cfg);
+  const menu = new StringSelectMenuBuilder().setCustomId('ui:gcat').setPlaceholder(L(lc, 'Choose a category', 'Elige una categoría'))
+    .addOptions(GCATS.map(([id, ico, n]) => ({ label: ico + ' ' + pick(lc, n), value: id, default: id === cat })));
+  const rows = [new ActionRowBuilder().addComponents(menu)];
+  const cmds = guard.CMDS.filter((c) => c.d);
+  const embeds = [];
+  if (cat === 'home') {
+    const counts = GCATS.slice(1).map(([id, ico, n]) => ico + ' **' + pick(lc, n) + '** — ' + cmds.filter((c) => catOf(c) === id).length).join('\n');
+    embeds.push(new EmbedBuilder().setColor(color).setTitle('📖 ' + L(lc, 'Command guide', 'Guía de comandos'))
+      .setDescription(L(lc, 'Prefix: `' + p + '` ' + (cfg.prefixEnabled === false ? '(**off** — turn it on in /help → Settings)' : '') + '\nExample: `' + p + 'config show`\n\n', 'Prefijo: `' + p + '` ' + (cfg.prefixEnabled === false ? '(**apagado**: actívalo en /help → Ajustes)' : '') + '\nEjemplo: `' + p + 'config show`\n\n') + counts + '\n\n' + L(lc, 'Pick a category below. Use `/help` to install and tune modules.', 'Elige una categoría abajo. Usa `/help` para instalar y ajustar módulos.')));
+  } else {
+    const info = GCATS.find((c) => c[0] === cat);
+    const lines = cmds.filter((c) => catOf(c) === cat).map((c) => '`' + p + c.name + '`' + (c.aliases && c.aliases.length ? ' *(' + c.aliases.join(', ') + ')*' : '') + ' — ' + L(lc, c.d, c.es || c.d));
+    let chunk = '';
+    const parts = [];
+    for (const l of lines) { if ((chunk + l).length > 3800) { parts.push(chunk); chunk = ''; } chunk += l + '\n'; }
+    parts.push(chunk);
+    parts.forEach((t, n) => { const e = new EmbedBuilder().setColor(color).setDescription(t || '—'); if (n === 0) e.setTitle(info[1] + ' ' + pick(lc, info[2])); embeds.push(e); });
+  }
+  return { embeds, components: rows };
+}
+const guideCommand = {
+  data: new SlashCommandBuilder().setName('guía').setDescription('Panel with every command that uses the prefix')
+    .setDescriptionLocalizations({ 'es-ES': 'Panel con todos los comandos que usan el prefijo', 'es-419': 'Panel con todos los comandos que usan el prefijo' }).setDMPermission(false),
+  async execute(i) {
+    if (!i.guild) return;
+    const cfg = getCfg(i.guild.id);
+    const payload = guidePayload(cfg, langOf(i, cfg), 'home');
+    if (cfg.ui.ephemeral) payload.flags = EPH;
+    return i.reply(payload);
+  },
+};
+
 /* ============================ eventos ============================ */
 function attach(client) {
   const tagSeen = new Map();
@@ -849,4 +888,4 @@ async function webInstall(g, ids) {
   return { summary: e.data.description };
 }
 
-module.exports = { webGuild, webApply, webAct, webInstall, commands: [helpCommand], handle, attach, MODS };
+module.exports = { webGuild, webApply, webAct, webInstall, commands: [helpCommand, guideCommand], handle, attach, MODS };
