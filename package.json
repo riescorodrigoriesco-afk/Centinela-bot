@@ -15,10 +15,10 @@
   },
   "optionalDependencies": {
     "@napi-rs/canvas": "^0.1.65",
-    "@discordjs/voice": "*",
+    "@discordjs/voice": "^0.19.0",
     "opusscript": "*",
     "libsodium-wrappers": "*",
-    "@snazzah/davey": "*",
+    "@snazzah/davey": "^0.1.9",
     "msedge-tts": "*"
   }
 }
