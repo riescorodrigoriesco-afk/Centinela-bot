@@ -184,17 +184,36 @@ function chunks(text) {
 
 async function tts(text, lang, gender) {
   const k = keys();
-  try { return await edgeTts(text, lang, gender); } catch (_) { /* cae a la voz de Google */ }
-  if (process.env.VOICE_TTS === 'openai' && k.openai) {
-    const r = await fetch('https://api.openai.com/v1/audio/speech', { method: 'POST', headers: { Authorization: 'Bearer ' + k.openai, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'tts-1', voice: 'alloy', input: text, response_format: 'mp3' }) });
-    if (!r.ok) throw new Error('tts ' + r.status);
-    return Buffer.from(await r.arrayBuffer());
+  // 1) Voces premium (más humanas) si hay clave
+  if (process.env.ELEVENLABS_API_KEY) {
+    try {
+      const id = (gender === 'male' ? process.env.ELEVEN_VOICE_MALE : process.env.ELEVEN_VOICE_FEMALE) || (gender === 'male' ? 'pNInz6obpgDQGcFmaJgB' : '21m00Tcm4TlvDq8ikWAM');
+      const r = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + id + '?output_format=mp3_44100_64', { method: 'POST', headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'content-type': 'application/json' }, body: JSON.stringify({ text, model_id: 'eleven_flash_v2_5' }) });
+      if (r.ok) return Buffer.from(await r.arrayBuffer());
+    } catch (_) { /* sigue con la siguiente */ }
   }
+  if (process.env.VOICE_TTS === 'openai' && k.openai) {
+    try {
+      const r = await fetch('https://api.openai.com/v1/audio/speech', { method: 'POST', headers: { Authorization: 'Bearer ' + k.openai, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'gpt-4o-mini-tts', voice: gender === 'male' ? 'ash' : 'coral', input: text, instructions: 'Speak like a relaxed, friendly person in a casual conversation, with natural pauses and expression.', response_format: 'mp3' }) });
+      if (r.ok) return Buffer.from(await r.arrayBuffer());
+    } catch (_) {}
+  }
+  // 2) Voces neuronales de Edge (gratis)
+  try { return await edgeTts(text, lang, gender); } catch (_) { /* cae a la voz de Google */ }
+  // 3) Google (último recurso)
   const url = 'https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=' + encodeURIComponent(lang) + '&q=' + encodeURIComponent(text);
   const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
   if (!r.ok) throw new Error('tts ' + r.status);
   return Buffer.from(await r.arrayBuffer());
 }
+
+// Al arrancar: informa en los logs qué piezas de voz funcionan
+async function selfTest() {
+  const k = keys();
+  console.log('[voz] librerías: voice=' + !!V + ' opus=' + !!prism + ' edge=' + !!Edge + ' | STT=' + (k.stt ? 'ok' : 'FALTA clave') + ' cerebro=' + (k.brain ? k.brain.type : 'FALTA clave') + ' | premium=' + (process.env.ELEVENLABS_API_KEY ? 'elevenlabs' : process.env.VOICE_TTS === 'openai' ? 'openai' : 'no'));
+  try { const b = await edgeTts('Hola', 'es', 'female'); console.log('[voz] voz Edge OK (' + b.length + ' bytes)'); } catch (e) { console.log('[voz] voz Edge no disponible (' + e.message + '), se usará Google'); }
+}
+setTimeout(() => selfTest().catch(() => {}), 8000);
 
 async function speak(s, text, lang, gender) {
   s.speaking = true;
