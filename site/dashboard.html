@@ -70,7 +70,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     c.appendChild(el('p',{class:'sub',text:msg||'Entra con Discord, autoriza la app, añade a Centinela a tu servidor y personalízalo todo desde aquí.'}));
     var row=el('div',{class:'row'});
     if(oauth)row.appendChild(el('a',{class:'btn',href:'/auth/login',text:'Login with Discord'}));
-    row.appendChild(el('a',{class:'btn sec',href:'/auth/admin',text:'Soy el administrador del bot'}));
+    if(!oauth)row.appendChild(el('a',{class:'btn sec',href:'/auth/admin',text:'Entrar como administrador (temporal)'}));
     c.appendChild(row);m.appendChild(c);
     var aside=document.querySelector('aside');aside.style.display='none';document.querySelector('.app').style.gridTemplateColumns='1fr';
   }

@@ -54,6 +54,14 @@ function safeEqual(a, b) {
 }
 
 function auth(req, res, next) {
+  // Con el login de Discord activo, solo entra el dueño del bot con su cuenta de Discord.
+  const sess = typeof sessionOf === 'function' ? sessionOf(req) : null;
+  if (sess && sess.admin) return next();
+  if (oauthReady()) {
+    if (req.path.startsWith('/api') || req.originalUrl.startsWith('/api')) return res.status(401).json({ error: 'Inicia sesión con la cuenta de Discord del dueño del bot.' });
+    return res.redirect('/auth/login?next=' + encodeURIComponent(req.originalUrl));
+  }
+  // Respaldo mientras el login de Discord no esté configurado
   const header = req.headers.authorization || '';
   if (header.startsWith('Basic ')) {
     const decoded = Buffer.from(header.slice(6), 'base64').toString();
@@ -408,7 +416,7 @@ const oauthStates = new Map();
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of sessions) if (v.exp < now) sessions.delete(k);
-  for (const [k, v] of oauthStates) if (v < now) oauthStates.delete(k);
+  for (const [k, v] of oauthStates) if (v.exp < now) oauthStates.delete(k);
 }, 600000).unref();
 
 const baseUrl = (req) => process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : req.protocol + '://' + req.get('host'));
@@ -431,10 +439,24 @@ function startSession(req, res, data) {
 }
 const oauthReady = () => !!(process.env.DISCORD_CLIENT_SECRET && config.id);
 
+async function botOwners() {
+  const ids = new Set(String(process.env.BOT_OWNER_IDS || '').split(',').map((x) => x.trim()).filter(Boolean));
+  try {
+    const rest = new REST({ version: '10' }).setToken(config.token);
+    const a = await rest.get(Routes.currentApplication());
+    if (a.team && a.team.members) for (const m of a.team.members) ids.add(m.user.id);
+    else if (a.owner) ids.add(a.owner.id);
+  } catch (e) {
+    log('No se pudo leer el dueño del bot: ' + e.message);
+  }
+  return ids;
+}
+
 app.get('/auth/login', (req, res) => {
   if (!oauthReady()) return res.redirect('/dashboard.html?e=nosecret');
   const state = crypto.randomBytes(16).toString('base64url');
-  oauthStates.set(state, Date.now() + 600000);
+  const next = String(req.query.next || '');
+  oauthStates.set(state, { exp: Date.now() + 600000, next: next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard.html' });
   const url = 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(config.id) + '&response_type=code&scope=identify%20guilds&prompt=none&state=' + state + '&redirect_uri=' + encodeURIComponent(baseUrl(req) + '/auth/callback');
   res.redirect(url);
 });
@@ -443,6 +465,7 @@ app.get('/auth/callback', async (req, res) => {
   try {
     const { code, state } = req.query;
     if (!oauthReady() || !code || !oauthStates.has(state)) return res.redirect('/dashboard.html?e=state');
+    const st = oauthStates.get(state);
     oauthStates.delete(state);
     const tr = await fetch('https://discord.com/api/v10/oauth2/token', {
       method: 'POST',
@@ -456,16 +479,18 @@ app.get('/auth/callback', async (req, res) => {
     const gl = await (await fetch('https://discord.com/api/v10/users/@me/guilds', { headers: h })).json();
     const manageList = (Array.isArray(gl) ? gl : []).filter((g) => g.owner || (BigInt(g.permissions || 0) & 0x28n) !== 0n).map((g) => ({ id: g.id, name: g.name }));
     const manage = new Set(manageList.map((g) => g.id));
-    startSession(req, res, { admin: false, uid: me.id, name: me.global_name || me.username, avatar: me.avatar ? 'https://cdn.discordapp.com/avatars/' + me.id + '/' + me.avatar + '.png?size=64' : null, guilds: manage, manageList });
-    res.redirect('/dashboard.html');
+    const owners = await botOwners();
+    const isOwner = owners.has(me.id);
+    startSession(req, res, { admin: isOwner, uid: me.id, name: me.global_name || me.username, avatar: me.avatar ? 'https://cdn.discordapp.com/avatars/' + me.id + '/' + me.avatar + '.png?size=64' : null, guilds: manage, manageList });
+    res.redirect(isOwner && st.next ? st.next : '/dashboard.html');
   } catch (e) {
     log('Login con Discord falló: ' + e.message);
     res.redirect('/dashboard.html?e=token');
   }
 });
 
-// Entrada del administrador (usuario admin + PANEL_PASSWORD): ve y edita todos los servidores.
-app.get('/auth/admin', auth, (req, res) => {
+// Respaldo: solo funciona mientras el login de Discord no esté configurado
+app.get('/auth/admin', (req, res, next) => (oauthReady() ? res.redirect('/auth/login') : next()), auth, (req, res) => {
   startSession(req, res, { admin: true, uid: null, name: 'Administrador', avatar: null, guilds: new Set() });
   res.redirect('/dashboard.html');
 });

@@ -94,4 +94,4 @@ Cada dueño o administrador configura sus servidores en `/dashboard.html` inicia
 1. En Railway, la variable `DISCORD_CLIENT_SECRET` (Developer Portal → OAuth2 → Client Secret).
 2. En el Developer Portal → OAuth2 → Redirects, añadir `https://TU-DOMINIO/auth/callback`.
 
-El administrador del bot puede entrar sin eso desde «Soy el administrador del bot» (usuario `admin` + `PANEL_PASSWORD`).
+El dueño del bot (o los IDs en `BOT_OWNER_IDS`) entra con su cuenta de Discord y además abre `/panel` (token e ID) y ve todos los servidores. Mientras el login de Discord no esté configurado, el respaldo es usuario `admin` + `PANEL_PASSWORD`.
