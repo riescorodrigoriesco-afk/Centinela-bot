@@ -437,7 +437,7 @@ function startSession(req, res, data) {
   sessions.set(sid, { ...data, exp: Date.now() + SESSION_MS });
   setCookie(req, res, 'cs', sid, SESSION_MS);
 }
-const oauthReady = () => !!(process.env.DISCORD_CLIENT_SECRET && config.id);
+const oauthReady = () => !!config.id; // flujo implícito: no necesita secreto del cliente
 
 async function botOwners() {
   const ids = new Set(String(process.env.BOT_OWNER_IDS || '').split(',').map((x) => x.trim()).filter(Boolean));
@@ -453,39 +453,53 @@ async function botOwners() {
 }
 
 app.get('/auth/login', (req, res) => {
-  if (!oauthReady()) return res.redirect('/dashboard.html?e=nosecret');
+  if (!oauthReady()) return res.redirect('/dashboard.html?e=nosetup');
   const state = crypto.randomBytes(16).toString('base64url');
   const next = String(req.query.next || '');
   oauthStates.set(state, { exp: Date.now() + 600000, next: next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard.html' });
-  const url = 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(config.id) + '&response_type=code&scope=identify%20guilds&prompt=none&state=' + state + '&redirect_uri=' + encodeURIComponent(baseUrl(req) + '/auth/callback');
+  const url = 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(config.id) + '&response_type=token&scope=identify%20guilds&prompt=none&state=' + state + '&redirect_uri=' + encodeURIComponent(baseUrl(req) + '/auth/callback');
   res.redirect(url);
 });
 
-app.get('/auth/callback', async (req, res) => {
+// Discord devuelve el token en el fragmento (#), que solo ve el navegador: esta página lo pasa al servidor.
+app.get('/auth/callback', (_req, res) => {
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Entrando…</title>
+<body style="background:#0b1626;color:#c9d4e3;font:16px system-ui;padding:40px"><p id="m">Entrando con Discord…</p>
+<script>
+(async function(){
+  var h=new URLSearchParams(location.hash.slice(1)),q=new URLSearchParams(location.search);
+  if(!h.get('access_token')){location.replace('/dashboard.html?e='+(q.get('error')?'denied':'state'));return}
+  try{
+    var r=await fetch('/auth/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({access_token:h.get('access_token'),state:h.get('state')})});
+    var j=await r.json();
+    if(!r.ok)throw new Error(j.error);
+    location.replace(j.next||'/dashboard.html');
+  }catch(e){location.replace('/dashboard.html?e=token')}
+})();
+</script></body>`);
+});
+
+app.post('/auth/token', async (req, res) => {
   try {
-    const { code, state } = req.query;
-    if (!oauthReady() || !code || !oauthStates.has(state)) return res.redirect('/dashboard.html?e=state');
+    const { access_token: tok, state } = req.body || {};
     const st = oauthStates.get(state);
+    if (!oauthReady() || !tok || !st) return res.status(400).json({ error: 'state' });
     oauthStates.delete(state);
-    const tr = await fetch('https://discord.com/api/v10/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: config.id, client_secret: process.env.DISCORD_CLIENT_SECRET, grant_type: 'authorization_code', code: String(code), redirect_uri: baseUrl(req) + '/auth/callback' }),
-    });
-    if (!tr.ok) return res.redirect('/dashboard.html?e=token');
-    const tok = await tr.json();
-    const h = { Authorization: 'Bearer ' + tok.access_token };
-    const me = await (await fetch('https://discord.com/api/v10/users/@me', { headers: h })).json();
+    const h = { Authorization: 'Bearer ' + tok };
+    const info = await fetch('https://discord.com/api/v10/oauth2/@me', { headers: h });
+    if (!info.ok) return res.status(400).json({ error: 'token' });
+    const ij = await info.json();
+    if (!ij.application || ij.application.id !== String(config.id) || !ij.user) return res.status(400).json({ error: 'app' });
+    const me = ij.user;
     const gl = await (await fetch('https://discord.com/api/v10/users/@me/guilds', { headers: h })).json();
     const manageList = (Array.isArray(gl) ? gl : []).filter((g) => g.owner || (BigInt(g.permissions || 0) & 0x28n) !== 0n).map((g) => ({ id: g.id, name: g.name }));
-    const manage = new Set(manageList.map((g) => g.id));
     const owners = await botOwners();
     const isOwner = owners.has(me.id);
-    startSession(req, res, { admin: isOwner, uid: me.id, name: me.global_name || me.username, avatar: me.avatar ? 'https://cdn.discordapp.com/avatars/' + me.id + '/' + me.avatar + '.png?size=64' : null, guilds: manage, manageList });
-    res.redirect(isOwner && st.next ? st.next : '/dashboard.html');
+    startSession(req, res, { admin: isOwner, uid: me.id, name: me.global_name || me.username, avatar: me.avatar ? 'https://cdn.discordapp.com/avatars/' + me.id + '/' + me.avatar + '.png?size=64' : null, guilds: new Set(manageList.map((g) => g.id)), manageList });
+    res.json({ next: isOwner && st.next ? st.next : '/dashboard.html' });
   } catch (e) {
     log('Login con Discord falló: ' + e.message);
-    res.redirect('/dashboard.html?e=token');
+    res.status(400).json({ error: 'token' });
   }
 });
 

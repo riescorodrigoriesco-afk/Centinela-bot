@@ -90,8 +90,6 @@ Palabras prohibidas, tickets (botón → canal privado), roles por botones, nive
 
 ## Login con Discord (configurar desde la web)
 
-Cada dueño o administrador configura sus servidores en `/dashboard.html` iniciando sesión con Discord. Requiere:
-1. En Railway, la variable `DISCORD_CLIENT_SECRET` (Developer Portal → OAuth2 → Client Secret).
-2. En el Developer Portal → OAuth2 → Redirects, añadir `https://TU-DOMINIO/auth/callback`.
+Se entra con «Login with Discord» (flujo implícito, sin secreto). Solo hace falta, en el Developer Portal → OAuth2 → Redirects, añadir `https://TU-DOMINIO/auth/callback`.
 
-El dueño del bot (o los IDs en `BOT_OWNER_IDS`) entra con su cuenta de Discord y además abre `/panel` (token e ID) y ve todos los servidores. Mientras el login de Discord no esté configurado, el respaldo es usuario `admin` + `PANEL_PASSWORD`.
+El dueño del bot (o los IDs en `BOT_OWNER_IDS`) entra como administrador: ve todos los servidores y abre `/panel` (token e ID). Los demás ven solo sus servidores. Si aún no hay token configurado, `/panel` pide usuario `admin` + `PANEL_PASSWORD` una sola vez.

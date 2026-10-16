@@ -70,11 +70,10 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     c.appendChild(el('p',{class:'sub',text:msg||'Entra con Discord, autoriza la app, añade a Centinela a tu servidor y personalízalo todo desde aquí.'}));
     var row=el('div',{class:'row'});
     if(oauth)row.appendChild(el('a',{class:'btn',href:'/auth/login',text:'Login with Discord'}));
-    if(!oauth)row.appendChild(el('a',{class:'btn sec',href:'/auth/admin',text:'Entrar como administrador (temporal)'}));
     c.appendChild(row);m.appendChild(c);
     var aside=document.querySelector('aside');aside.style.display='none';document.querySelector('.app').style.gridTemplateColumns='1fr';
   }
-  var ERR={nosecret:'El inicio de sesión con Discord todavía no está activado en este bot. Falta añadir DISCORD_CLIENT_SECRET en Railway y la redirección en el Developer Portal.',state:'La sesión caducó. Inténtalo otra vez.',token:'Discord no aceptó el inicio de sesión. Revisa el secreto y la redirección en el Developer Portal.'};
+  var ERR={nosetup:'Primero conecta el token del bot en el panel.',denied:'Cancelaste la autorización. Pulsa de nuevo para continuar.',state:'La sesión caducó. Inténtalo otra vez.',token:'No se pudo iniciar sesión. Si Discord dice «redirect_uri inválido», añade https://bot-activador-production.up.railway.app/auth/callback en Developer Portal → OAuth2 → Redirects.'};
   function loadGuilds(){
     api('GET','/api/me').then(function(me){
       var e=new URLSearchParams(location.search).get('e');
