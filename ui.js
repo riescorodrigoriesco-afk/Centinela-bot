@@ -266,7 +266,7 @@ const MODS = [
     ],
   },
 ];
-MODS.push(...require('./extras').mods);
+MODS.push(...require('./extras').mods, ...require('./voice').mods);
 const MOD = new Map(MODS.map((m) => [m.id, m]));
 
 const isOn = (cfg, m) => (m.get ? !!m.get(cfg) : m.on ? !!getPath(cfg, m.on) : null);

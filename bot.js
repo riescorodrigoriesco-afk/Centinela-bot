@@ -69,6 +69,7 @@ const DEFAULTS = {
   tickets: { enabled: false, channel: null, staffRole: null, logChannel: null, categories: [], perUser: 1 },
   rolePanel: { channel: null, roles: [], mode: 'buttons', emojis: [], tempHours: 0, reactionMsg: null, reactionMap: {} },
   levels: { enabled: false, announce: true, xpMin: 15, xpMax: 25, cooldownSec: 60, rewards: [], activityRole: null, activityMessages: 0 },
+  voice: { enabled: true, lang: 'es', persona: '', transcript: true },
   autoRole: { enabled: false, humans: [], bots: [], delaySec: 0, tempHours: 0 },
   maxSecurity: true,
   exemptChannels: [],
@@ -209,6 +210,8 @@ const INVITE_PERMS = new PermissionsBitField([
   P.ModerateMembers,
   P.ViewAuditLog,
   P.ManageWebhooks,
+  P.Connect,
+  P.Speak,
 ]).bitfield.toString();
 
 /* ============================ acciones base ============================ */

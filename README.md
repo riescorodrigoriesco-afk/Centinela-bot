@@ -93,3 +93,7 @@ Palabras prohibidas, tickets (botón → canal privado), roles por botones, nive
 Se entra con «Login with Discord» (flujo implícito, sin secreto). Solo hace falta, en el Developer Portal → OAuth2 → Redirects, añadir `https://TU-DOMINIO/auth/callback`.
 
 El dueño del bot (o los IDs en `BOT_OWNER_IDS`) entra como administrador: ve todos los servidores y abre `/panel` (token e ID). Los demás ven solo sus servidores. Si aún no hay token configurado, `/panel` pide usuario `admin` + `PANEL_PASSWORD` una sola vez.
+
+## Voz
+
+`/putbot` mete al bot en tu canal de voz; hablas y responde en voz alta. `/setidioma` elige el idioma (es, en, pt, fr, de, it, ja). Necesita en el hosting una clave: `GROQ_API_KEY` (gratis, sirve para oír y pensar) u `OPENAI_API_KEY`; opcional `ANTHROPIC_API_KEY` para que piense con Claude. El bot necesita permisos Conectar y Hablar.

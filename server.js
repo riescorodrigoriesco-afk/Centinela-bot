@@ -10,9 +10,10 @@ const gamesMod = require('./games');
 const guardMod = require('./guard');
 const uiMod = require('./ui');
 const extrasMod = require('./extras');
+const voiceMod = require('./voice');
 
-// Comandos slash: /help y /guía. El resto se maneja con menús, botones y el prefijo.
-const ALL_COMMANDS = [...uiMod.commands];
+// Comandos slash: /help, /guía, /putbot y /setidioma. El resto se maneja con menús, botones y el prefijo.
+const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands];
 const COMMAND_MAP = new Map(ALL_COMMANDS.map((c) => [c.data.name, c]));
 
 const FULL_INTENTS = [
@@ -22,10 +23,12 @@ const FULL_INTENTS = [
   GatewayIntentBits.GuildWebhooks,
   GatewayIntentBits.GuildMessages,
   GatewayIntentBits.GuildMessageReactions,
+  GatewayIntentBits.GuildVoiceStates,
   GatewayIntentBits.MessageContent, // privilegiado: antispam, invitaciones, comandos con !
 ];
 const LIMITED_INTENTS = [
   GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildVoiceStates,
   GatewayIntentBits.GuildMessageReactions,
   GatewayIntentBits.GuildModeration,
   GatewayIntentBits.GuildWebhooks,
@@ -251,6 +254,7 @@ async function startBot() {
         } else if (i.isMessageComponent()) {
           if (i.isButton() && (await guardMod.handleButton(i))) return;
           if (await extrasMod.handleComponent(i)) return;
+          if (await voiceMod.handleComponent(i)) return;
           if (!i.isButton()) return;
           await gamesMod.handleButton(i);
         }
