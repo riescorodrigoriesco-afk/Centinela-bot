@@ -244,6 +244,7 @@ async function startBot() {
     guardMod.attach(c);
     uiMod.attach(c);
     extrasMod.attach(c);
+    voiceMod.attach(c);
     c.on('interactionCreate', async (i) => {
       try {
         if (i.isChatInputCommand()) {

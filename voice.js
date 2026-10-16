@@ -152,11 +152,11 @@ async function pickModel(k) {
   return pick;
 }
 
-async function think(s, who, text, cfg) {
+async function think(s, who, text, cfg, written) {
   const k = keys().brain;
   if (!k) throw new Error('no-brain');
   const lang = LANGS[cfg.voice.lang] || LANGS.es;
-  const system = 'You are Centinela, a Discord bot having a live spoken conversation in a voice channel. Talk like a warm, relaxed friend would: natural, casual and expressive, with light humor, short reactions (like "ah, vaya", "uf", "claro") and, now and then, a brief follow-up question. Answer in ' + lang.en + ' in one to three short sentences, as spoken language: contractions, no markdown, no lists, no emojis, no stage directions. Do not claim to be human or to have a body or a real life; if someone asks what you are, say you are a bot, honestly and with good humor. Be accurate: if you do not know something, say so. The speaker is ' + who + '.' + (cfg.voice.persona ? ' Extra personality: ' + cfg.voice.persona : '');
+  const system = 'You are Centinela, a Discord bot having a live spoken conversation in a voice channel. Talk like a warm, relaxed friend would: natural, casual and expressive, with light humor, short reactions (like "ah, vaya", "uf", "claro") and, now and then, a brief follow-up question. Answer in ' + lang.en + ' ' + (written ? 'in a clear, helpful way (up to a short paragraph; you may use a few emojis; plain text, no markdown headers), like a smart AI assistant chatting in Discord.' : 'in one to three short sentences, as spoken language: contractions, no markdown, no lists, no emojis, no stage directions.') + ' Do not claim to be human or to have a body or a real life; if someone asks what you are, say you are a bot, honestly and with good humor. Be accurate: if you do not know something, say so. The speaker is ' + who + '.' + (cfg.voice.persona ? ' Extra personality: ' + cfg.voice.persona : '');
   s.history.push({ role: 'user', content: text });
   s.history = s.history.slice(-8);
   let out = '';
@@ -173,7 +173,7 @@ async function think(s, who, text, cfg) {
     const call = (model) => fetch(k.url, {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + k.key, 'content-type': 'application/json' },
-      body: JSON.stringify({ model, max_tokens: 220, messages: [{ role: 'system', content: system }, ...s.history] }),
+      body: JSON.stringify(Object.assign({ model, max_tokens: /gpt-oss|deepseek|qwen3|reason/i.test(model) ? 900 : 220, messages: [{ role: 'system', content: system }, ...s.history] }, /gpt-oss/i.test(model) ? { reasoning_effort: 'low' } : {})),
     });
     let r = await call(modelCache[k.url] || k.model);
     if ((r.status === 404 || r.status === 400) && !process.env.VOICE_MODEL) {
@@ -184,7 +184,8 @@ async function think(s, who, text, cfg) {
     const j = await r.json();
     out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
   }
-  out = out.replace(/[*_`#>]/g, '').trim();
+  out = out.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/[*_`#>]/g, '').trim();
+  if (!out) console.log('[voz] el modelo devolvió una respuesta vacía');
   s.history.push({ role: 'assistant', content: out });
   return out;
 }
@@ -426,4 +427,33 @@ async function handleComponent(i) {
   return true;
 }
 
-module.exports = { commands: [putbot, setidioma], handleComponent, mods, leave };
+/* ============================ charlar por el chat (menciona al bot) ============================ */
+const chatHist = new Map(); // canal -> { history }
+const chatRate = new Map();
+function attach(client) {
+  client.on('messageCreate', async (msg) => {
+    try {
+      if (!msg.guild || !msg.author || msg.author.bot || !client.user) return;
+      if (!msg.mentions.users.has(client.user.id) || msg.mentions.everyone) return;
+      const cfg = getCfg(msg.guild.id);
+      if (!cfg.voice || cfg.voice.enabled === false) return;
+      const text = (msg.content || '').replace(new RegExp('<@!?' + client.user.id + '>', 'g'), '').trim();
+      if (!text) return msg.reply({ content: L(msg.guild.preferredLocale, 'Yes? Ask me anything 🙂', '¿Dime? Pregúntame lo que quieras 🙂'), allowedMentions: { repliedUser: false } }).catch(() => {});
+      const now = Date.now();
+      const hist = (chatRate.get(msg.author.id) || []).filter((t) => now - t < 60000);
+      if (hist.length >= 8) return;
+      hist.push(now); chatRate.set(msg.author.id, hist);
+      msg.channel.sendTyping().catch(() => {});
+      let st = chatHist.get(msg.channelId);
+      if (!st) { st = { history: [] }; chatHist.set(msg.channelId, st); }
+      const answer = await think(st, msg.member ? msg.member.displayName : msg.author.username, text.slice(0, 1500), cfg, true);
+      if (!answer) return;
+      await msg.reply({ content: answer.slice(0, 1900), allowedMentions: { parse: [], repliedUser: false } });
+    } catch (e) {
+      if (e.message === 'no-brain') msg.reply('⚠️ ' + L(msg.guild.preferredLocale, 'I need an API key (`GROQ_API_KEY`) to chat.', 'Necesito una clave (`GROQ_API_KEY`) para charlar.')).catch(() => {});
+      else logErr(e);
+    }
+  });
+}
+
+module.exports = { commands: [putbot, setidioma], handleComponent, mods, leave, attach };
