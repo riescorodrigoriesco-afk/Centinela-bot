@@ -168,7 +168,7 @@ async function setDescription(c) {
   try {
     const rest = new REST({ version: '10' }).setToken(config.token);
     const description = '🛡️ Antiraid extremo, bienvenidas, autoroles, tickets y más. Usa /help y /guía.\nWeb y panel: ' + SITE_URL;
-    await rest.patch(Routes.currentApplication(), { body: { description, custom_install_url: SITE_URL } });
+    await rest.patch(Routes.currentApplication(), { body: { description, install_params: null, custom_install_url: SITE_URL } });
     log('Descripción y botón «Añadir app» apuntan a la web: ' + SITE_URL);
   } catch (e) {
     log('No se pudo actualizar la descripción del bot: ' + e.message);
