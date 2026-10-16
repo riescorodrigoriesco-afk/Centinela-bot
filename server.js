@@ -177,6 +177,20 @@ async function setDescription(c) {
     const rest = new REST({ version: '10' }).setToken(config.token);
     const description = '🛡️ Antiraid extremo, bienvenidas, autoroles, tickets y más. Usa /help y /guía.\nWeb y panel: ' + SITE_URL;
     await rest.patch(Routes.currentApplication(), { body: { description, install_params: null, custom_install_url: SITE_URL + '/dashboard.html' } });
+    // Intenta registrar la redirección OAuth2 automáticamente (si Discord no lo permite con el token del bot, se hace a mano en el Developer Portal)
+    try {
+      const cur = await rest.get(Routes.currentApplication());
+      const want = SITE_URL + '/auth/callback';
+      const have = Array.isArray(cur.redirect_uris) ? cur.redirect_uris : [];
+      if (!have.includes(want)) {
+        await rest.patch(Routes.currentApplication(), { body: { redirect_uris: [...have, want] } });
+        log('Redirección OAuth2 registrada: ' + want);
+      } else {
+        log('Redirección OAuth2 ya registrada');
+      }
+    } catch (e) {
+      log('No se pudo registrar la redirección OAuth2 sola: ' + e.message);
+    }
     const me = await rest.get(Routes.currentApplication());
     log('«Añadir app» → ' + (me.custom_install_url || 'SIN URL personalizada') + ' · install_params: ' + JSON.stringify(me.install_params || null));
   } catch (e) {
