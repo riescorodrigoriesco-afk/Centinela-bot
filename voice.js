@@ -213,7 +213,7 @@ async function selfTest() {
   console.log('[voz] librerías: voice=' + !!V + ' opus=' + !!prism + ' edge=' + !!Edge + ' | STT=' + (k.stt ? 'ok' : 'FALTA clave') + ' cerebro=' + (k.brain ? k.brain.type : 'FALTA clave') + ' | premium=' + (process.env.ELEVENLABS_API_KEY ? 'elevenlabs' : process.env.VOICE_TTS === 'openai' ? 'openai' : 'no'));
   try { const b = await edgeTts('Hola', 'es', 'female'); console.log('[voz] voz Edge OK (' + b.length + ' bytes)'); } catch (e) { console.log('[voz] voz Edge no disponible (' + e.message + '), se usará Google'); }
 }
-setTimeout(() => selfTest().catch(() => {}), 8000);
+setTimeout(() => { try { console.log(V.generateDependencyReport()); } catch (_) {} selfTest().catch(() => {}); }, 8000);
 
 async function speak(s, text, lang, gender) {
   s.speaking = true;
@@ -322,9 +322,13 @@ async function join(i) {
   await i.deferReply();
   leave(i.guild.id);
   const conn = V.joinVoiceChannel({ channelId: vc.id, guildId: i.guild.id, adapterCreator: i.guild.voiceAdapterCreator, selfDeaf: false, selfMute: false });
+  conn.on('stateChange', (a, b) => console.log('[voz] conexión ' + a.status + ' → ' + b.status + (b.reason !== undefined ? ' (razón ' + b.reason + ')' : '') + (b.closeCode ? ' código ' + b.closeCode : '')));
+  conn.on('error', (e) => console.log('[voz] error de conexión: ' + (e && e.message)));
   try {
-    await V.entersState(conn, V.VoiceConnectionStatus.Ready, 20000);
+    await V.entersState(conn, V.VoiceConnectionStatus.Ready, 30000);
   } catch (e) {
+    console.log('[voz] no se pudo conectar; estado final: ' + conn.state.status);
+    try { console.log(V.generateDependencyReport()); } catch (_) {}
     try { conn.destroy(); } catch (_) {}
     return i.editReply(L(lc, '❌ I could not connect to the voice channel.', '❌ No pude conectarme al canal de voz.'));
   }
