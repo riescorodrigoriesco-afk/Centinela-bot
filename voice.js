@@ -32,6 +32,35 @@ const LANGS = {
   ja: { name: '日本語', en: 'Japanese', stt: 'ja' },
 };
 
+// Voces neuronales de Microsoft Edge (gratis, sin clave). Si no están disponibles se usa la voz de Google.
+const VOICES = {
+  es: { female: 'es-MX-DaliaNeural', male: 'es-MX-JorgeNeural' },
+  en: { female: 'en-US-AriaNeural', male: 'en-US-GuyNeural' },
+  pt: { female: 'pt-BR-FranciscaNeural', male: 'pt-BR-AntonioNeural' },
+  fr: { female: 'fr-FR-DeniseNeural', male: 'fr-FR-HenriNeural' },
+  de: { female: 'de-DE-KatjaNeural', male: 'de-DE-ConradNeural' },
+  it: { female: 'it-IT-ElsaNeural', male: 'it-IT-DiegoNeural' },
+  ja: { female: 'ja-JP-NanamiNeural', male: 'ja-JP-KeitaNeural' },
+};
+let Edge = null;
+try { Edge = require('msedge-tts'); } catch (_) { Edge = null; }
+
+async function edgeTts(text, lang, gender) {
+  if (!Edge) throw new Error('no-edge');
+  const voice = (VOICES[lang] || VOICES.es)[gender === 'male' ? 'male' : 'female'];
+  const t = new Edge.MsEdgeTTS();
+  await t.setMetadata(voice, Edge.OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+  const r = t.toStream(text);
+  const stream = r && r.audioStream ? r.audioStream : r;
+  return await new Promise((resolve, reject) => {
+    const bufs = [];
+    const timer = setTimeout(() => reject(new Error('edge timeout')), 12000);
+    stream.on('data', (c) => bufs.push(Buffer.from(c)));
+    stream.on('end', () => { clearTimeout(timer); const b = Buffer.concat(bufs); b.length ? resolve(b) : reject(new Error('edge vacío')); });
+    stream.on('error', (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
 /* ============================ módulo para /help y el panel web ============================ */
 const mods = [
   {
@@ -40,6 +69,7 @@ const mods = [
     filters: [{ k: 'transcript', path: ['voice', 'transcript'], n: ['Write what is said in the channel chat', 'Escribir lo que se dice en el chat del canal'] }],
     fields: [
       { k: 'lang', path: ['voice', 'lang'], t: 'choice', c: Object.keys(LANGS), l: ['Language: ' + Object.keys(LANGS).join(' / '), 'Idioma: ' + Object.keys(LANGS).join(' / ')] },
+      { k: 'gender', path: ['voice', 'gender'], t: 'choice', c: ['female', 'male'], l: ['Voice: female / male', 'Voz: female / male'] },
       { k: 'persona', path: ['voice', 'persona'], t: 'str', long: true, optional: true, min: 0, max: 500, l: ['Personality (optional)', 'Personalidad (opcional)'] },
     ],
   },
@@ -113,7 +143,7 @@ async function think(s, who, text, cfg) {
   const k = keys().brain;
   if (!k) throw new Error('no-brain');
   const lang = LANGS[cfg.voice.lang] || LANGS.es;
-  const system = 'You are Centinela, a friendly Discord bot having a spoken conversation in a voice channel. Answer in ' + lang.en + ', in at most two short sentences, in plain spoken language: no markdown, no lists, no emojis. The speaker is ' + who + '.' + (cfg.voice.persona ? ' Personality: ' + cfg.voice.persona : '');
+  const system = 'You are Centinela, a Discord bot having a live spoken conversation in a voice channel. Talk like a warm, relaxed friend would: natural, casual and expressive, with light humor, short reactions (like "ah, vaya", "uf", "claro") and, now and then, a brief follow-up question. Answer in ' + lang.en + ' in one to three short sentences, as spoken language: contractions, no markdown, no lists, no emojis, no stage directions. Do not claim to be human or to have a body or a real life; if someone asks what you are, say you are a bot, honestly and with good humor. Be accurate: if you do not know something, say so. The speaker is ' + who + '.' + (cfg.voice.persona ? ' Extra personality: ' + cfg.voice.persona : '');
   s.history.push({ role: 'user', content: text });
   s.history = s.history.slice(-8);
   let out = '';
@@ -121,7 +151,7 @@ async function think(s, who, text, cfg) {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': k.key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: k.model, max_tokens: 200, system, messages: s.history }),
+      body: JSON.stringify({ model: k.model, max_tokens: 220, system, messages: s.history }),
     });
     if (!r.ok) throw new Error('brain ' + r.status);
     const j = await r.json();
@@ -130,7 +160,7 @@ async function think(s, who, text, cfg) {
     const r = await fetch(k.url, {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + k.key, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: k.model, max_tokens: 200, messages: [{ role: 'system', content: system }, ...s.history] }),
+      body: JSON.stringify({ model: k.model, max_tokens: 220, messages: [{ role: 'system', content: system }, ...s.history] }),
     });
     if (!r.ok) throw new Error('brain ' + r.status);
     const j = await r.json();
@@ -152,8 +182,9 @@ function chunks(text) {
   return out.slice(0, 4);
 }
 
-async function tts(text, lang) {
+async function tts(text, lang, gender) {
   const k = keys();
+  try { return await edgeTts(text, lang, gender); } catch (_) { /* cae a la voz de Google */ }
   if (process.env.VOICE_TTS === 'openai' && k.openai) {
     const r = await fetch('https://api.openai.com/v1/audio/speech', { method: 'POST', headers: { Authorization: 'Bearer ' + k.openai, 'content-type': 'application/json' }, body: JSON.stringify({ model: 'tts-1', voice: 'alloy', input: text, response_format: 'mp3' }) });
     if (!r.ok) throw new Error('tts ' + r.status);
@@ -165,11 +196,13 @@ async function tts(text, lang) {
   return Buffer.from(await r.arrayBuffer());
 }
 
-async function speak(s, text, lang) {
+async function speak(s, text, lang, gender) {
   s.speaking = true;
   try {
-    for (const c of chunks(text)) {
-      const mp3 = await tts(c, lang);
+    // Genera todos los trozos a la vez y los reproduce en orden (menos espera entre frases)
+    const jobs = chunks(text).map((c) => tts(c, lang, gender));
+    for (const job of jobs) {
+      const mp3 = await job;
       const res = V.createAudioResource(Readable.from(mp3), { inputType: V.StreamType.Arbitrary });
       s.player.play(res);
       await V.entersState(s.player, V.AudioPlayerStatus.Playing, 5000).catch(() => {});
@@ -206,7 +239,7 @@ async function onUtterance(s, guild, userId, pcm) {
       const ch = guild.channels.cache.get(s.textChannelId);
       if (ch) ch.send({ content: '🎤 **' + who.replace(/[*_`@]/g, '') + ':** ' + text.slice(0, 300) + '\n🤖 ' + answer.slice(0, 400), allowedMentions: { parse: [] } }).catch(() => {});
     }
-    await speak(s, answer, cfg.voice.lang);
+    await speak(s, answer, cfg.voice.lang, cfg.voice.gender);
   } catch (e) {
     if (e.message === 'no-stt' || e.message === 'no-brain') {
       const ch = s.textChannelId && guild.channels.cache.get(s.textChannelId);
@@ -304,7 +337,7 @@ async function join(i) {
   await i.editReply({ embeds: [e], components: [row] });
   if (k.stt && k.brain) {
     s.busy = true;
-    speak(s, L(lc, 'Hi! I am here. Talk to me.', '¡Hola! Ya estoy aquí. Háblame.'), cfg.voice.lang).catch(() => {}).finally(() => { s.busy = false; });
+    speak(s, L(lc, 'Hey! I am here. What is up?', '¡Ey, hola! Ya estoy aquí. ¿Qué cuentas?'), cfg.voice.lang, cfg.voice.gender).catch(() => {}).finally(() => { s.busy = false; });
   }
 }
 
@@ -319,7 +352,8 @@ const setidioma = {
   data: new SlashCommandBuilder().setName('setidioma').setDescription('Set the language the bot listens and speaks in')
     .setDescriptionLocalizations({ 'es-ES': 'Elige el idioma en el que el bot te escucha y habla', 'es-419': 'Elige el idioma en el que el bot te escucha y habla' })
     .setDMPermission(false)
-    .addStringOption((o) => o.setName('idioma').setDescription('Language').setRequired(true).addChoices(...Object.entries(LANGS).map(([v, l]) => ({ name: l.name, value: v })))),
+    .addStringOption((o) => o.setName('idioma').setDescription('Language').setRequired(true).addChoices(...Object.entries(LANGS).map(([v, l]) => ({ name: l.name, value: v }))))
+    .addStringOption((o) => o.setName('voz').setDescription('Voice').addChoices({ name: 'Femenina / Female', value: 'female' }, { name: 'Masculina / Male', value: 'male' })),
   async execute(i) {
     if (!i.guild) return;
     const lc = i.locale;
@@ -329,8 +363,10 @@ const setidioma = {
     }
     const v = i.options.getString('idioma');
     cfg.voice.lang = v;
+    const g = i.options.getString('voz');
+    if (g) cfg.voice.gender = g;
     saveCfg();
-    return i.reply({ content: '🌐 ' + L(lc, 'Voice language set to ', 'Idioma de voz: ') + '**' + LANGS[v].name + '**', flags: EPH });
+    return i.reply({ content: '🌐 ' + L(lc, 'Voice language set to ', 'Idioma de voz: ') + '**' + LANGS[v].name + '**' + (g ? ' · ' + (g === 'male' ? '🧔' : '👩') : ''), flags: EPH });
   },
 };
 

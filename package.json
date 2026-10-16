@@ -18,6 +18,7 @@
     "@discordjs/voice": "*",
     "opusscript": "*",
     "libsodium-wrappers": "*",
-    "@snazzah/davey": "*"
+    "@snazzah/davey": "*",
+    "msedge-tts": "*"
   }
 }
