@@ -80,10 +80,18 @@ El único comando slash es `/help`: abre un menú con la tabla de comandos y fun
 
 ## Panel web completo
 
-`/panel/dashboard.html` (misma contraseña) permite configurar todos los módulos de cada servidor desde el navegador: instalar, activar/desactivar, valores, filtros, canales, roles y autoroles.
+`/dashboard.html` permite configurar todos los módulos de cada servidor desde el navegador: instalar, activar/desactivar, valores, filtros, canales, roles y autoroles.
 
 ## Funciones extra
 
 Palabras prohibidas, tickets (botón → canal privado), roles por botones, niveles (`$rank`, `$top`) y autoroles. Se configuran en `/help` → Ajustes o en `/panel/dashboard.html`.
 
 `/guía` muestra un panel con todos los comandos con prefijo, por categorías.
+
+## Login con Discord (configurar desde la web)
+
+Cada dueño o administrador configura sus servidores en `/dashboard.html` iniciando sesión con Discord. Requiere:
+1. En Railway, la variable `DISCORD_CLIENT_SECRET` (Developer Portal → OAuth2 → Client Secret).
+2. En el Developer Portal → OAuth2 → Redirects, añadir `https://TU-DOMINIO/auth/callback`.
+
+El administrador del bot puede entrar sin eso desde «Soy el administrador del bot» (usuario `admin` + `PANEL_PASSWORD`).

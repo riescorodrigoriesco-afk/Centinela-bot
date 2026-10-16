@@ -168,8 +168,8 @@ async function setDescription(c) {
   try {
     const rest = new REST({ version: '10' }).setToken(config.token);
     const description = '🛡️ Antiraid extremo, bienvenidas, autoroles, tickets y más. Usa /help y /guía.\nWeb y panel: ' + SITE_URL;
-    await rest.patch(Routes.currentApplication(), { body: { description } });
-    log('Descripción del bot actualizada con el link de la web');
+    await rest.patch(Routes.currentApplication(), { body: { description, custom_install_url: SITE_URL } });
+    log('Descripción y botón «Añadir app» apuntan a la web: ' + SITE_URL);
   } catch (e) {
     log('No se pudo actualizar la descripción del bot: ' + e.message);
   }
@@ -313,8 +313,9 @@ app.get('/api/public', (_req, res) => {
 });
 
 // Panel privado
+app.get('/panel/dashboard.html', (_req, res) => res.redirect('/dashboard.html'));
 app.use('/panel', auth, express.static(path.join(__dirname, 'public')));
-app.use('/api', auth);
+app.set('trust proxy', 1);
 
 function currentState() {
   if (!config.enabled || !config.token) return 'detenido';
@@ -323,7 +324,7 @@ function currentState() {
   return 'conectando';
 }
 
-app.get('/api/status', (_req, res) => {
+app.get('/api/status', auth, (_req, res) => {
   const online = client && client.isReady();
   res.json({
     configured: !!config.token,
@@ -349,7 +350,7 @@ app.get('/api/status', (_req, res) => {
   });
 });
 
-app.post('/api/connect', async (req, res) => {
+app.post('/api/connect', auth, async (req, res) => {
   const { token, id, presence, activityText } = req.body || {};
   const newToken = (token || '').trim() || config.token;
   const newId = String(id || '').trim();
@@ -380,7 +381,7 @@ app.post('/api/connect', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/stop', async (_req, res) => {
+app.post('/api/stop', auth, async (_req, res) => {
   config.enabled = false;
   saveConfig();
   await stopClient();
@@ -388,7 +389,7 @@ app.post('/api/stop', async (_req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/restart', (_req, res) => {
+app.post('/api/restart', auth, (_req, res) => {
   if (!config.token) return res.status(400).json({ error: 'Primero configura el token y el ID.' });
   config.enabled = true;
   saveConfig();
@@ -399,23 +400,116 @@ app.post('/api/restart', (_req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- Panel completo de configuración (protegido por /api auth) ---------- */
-function guildOf(req, res) {
+/* ---------- Sesiones y login con Discord ---------- */
+const sessions = new Map(); // sid -> { admin, uid, name, avatar, guilds:Set, exp }
+const SESSION_MS = 7 * 24 * 3600 * 1000;
+const oauthStates = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of sessions) if (v.exp < now) sessions.delete(k);
+  for (const [k, v] of oauthStates) if (v < now) oauthStates.delete(k);
+}, 600000).unref();
+
+const baseUrl = (req) => process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : req.protocol + '://' + req.get('host'));
+const cookieOf = (req, name) => {
+  const m = (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(name + '='));
+  return m ? decodeURIComponent(m.slice(name.length + 1)) : null;
+};
+function setCookie(req, res, name, value, maxAgeMs) {
+  res.append('Set-Cookie', name + '=' + encodeURIComponent(value) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + Math.floor(maxAgeMs / 1000) + (req.secure ? '; Secure' : ''));
+}
+function sessionOf(req) {
+  const sid = cookieOf(req, 'cs');
+  const s = sid && sessions.get(sid);
+  return s && s.exp > Date.now() ? s : null;
+}
+function startSession(req, res, data) {
+  const sid = crypto.randomBytes(24).toString('base64url');
+  sessions.set(sid, { ...data, exp: Date.now() + SESSION_MS });
+  setCookie(req, res, 'cs', sid, SESSION_MS);
+}
+const oauthReady = () => !!(process.env.DISCORD_CLIENT_SECRET && config.id);
+
+app.get('/auth/login', (req, res) => {
+  if (!oauthReady()) return res.redirect('/dashboard.html?e=nosecret');
+  const state = crypto.randomBytes(16).toString('base64url');
+  oauthStates.set(state, Date.now() + 600000);
+  const url = 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(config.id) + '&response_type=code&scope=identify%20guilds&prompt=none&state=' + state + '&redirect_uri=' + encodeURIComponent(baseUrl(req) + '/auth/callback');
+  res.redirect(url);
+});
+
+app.get('/auth/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    if (!oauthReady() || !code || !oauthStates.has(state)) return res.redirect('/dashboard.html?e=state');
+    oauthStates.delete(state);
+    const tr = await fetch('https://discord.com/api/v10/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: config.id, client_secret: process.env.DISCORD_CLIENT_SECRET, grant_type: 'authorization_code', code: String(code), redirect_uri: baseUrl(req) + '/auth/callback' }),
+    });
+    if (!tr.ok) return res.redirect('/dashboard.html?e=token');
+    const tok = await tr.json();
+    const h = { Authorization: 'Bearer ' + tok.access_token };
+    const me = await (await fetch('https://discord.com/api/v10/users/@me', { headers: h })).json();
+    const gl = await (await fetch('https://discord.com/api/v10/users/@me/guilds', { headers: h })).json();
+    const manage = new Set((Array.isArray(gl) ? gl : []).filter((g) => g.owner || (BigInt(g.permissions || 0) & 0x28n) !== 0n).map((g) => g.id));
+    startSession(req, res, { admin: false, uid: me.id, name: me.global_name || me.username, avatar: me.avatar ? 'https://cdn.discordapp.com/avatars/' + me.id + '/' + me.avatar + '.png?size=64' : null, guilds: manage });
+    res.redirect('/dashboard.html');
+  } catch (e) {
+    log('Login con Discord falló: ' + e.message);
+    res.redirect('/dashboard.html?e=token');
+  }
+});
+
+// Entrada del administrador (usuario admin + PANEL_PASSWORD): ve y edita todos los servidores.
+app.get('/auth/admin', auth, (req, res) => {
+  startSession(req, res, { admin: true, uid: null, name: 'Administrador', avatar: null, guilds: new Set() });
+  res.redirect('/dashboard.html');
+});
+
+app.get('/auth/logout', (req, res) => {
+  const sid = cookieOf(req, 'cs');
+  if (sid) sessions.delete(sid);
+  setCookie(req, res, 'cs', '', 0);
+  res.redirect('/dashboard.html');
+});
+
+app.get('/api/me', (req, res) => {
+  const s = sessionOf(req);
+  res.json({ loggedIn: !!s, admin: !!(s && s.admin), name: s ? s.name : null, avatar: s ? s.avatar : null, oauth: oauthReady() });
+});
+
+/* ---------- Panel completo de configuración (sesión de Discord o administrador) ---------- */
+function dashAuth(req, res, next) {
+  const s = sessionOf(req);
+  if (!s) return res.status(401).json({ error: 'Inicia sesión para configurar tu servidor.' });
+  req.sess = s;
+  next();
+}
+async function guildOf(req, res) {
   const g = client && client.isReady() ? client.guilds.cache.get(req.params.id) : null;
-  if (!g) res.status(404).json({ error: 'Servidor no encontrado o el bot está desconectado.' });
+  if (!g) { res.status(404).json({ error: 'Servidor no encontrado o el bot está desconectado.' }); return null; }
+  const s = req.sess;
+  if (!s.admin) {
+    if (!s.guilds.has(g.id)) { res.status(403).json({ error: 'No tienes permisos de administrador en ese servidor.' }); return null; }
+    const m = await g.members.fetch(s.uid).catch(() => null);
+    if (!botMod.canConfigure(g, s.uid, m)) { res.status(403).json({ error: 'Máxima seguridad activa: solo el dueño del servidor o la lista de confianza pueden cambiar esto.' }); return null; }
+  }
   return g;
 }
 const wrap = (fn) => async (req, res) => {
   try { await fn(req, res); } catch (e) { res.status(400).json({ error: e.message }); }
 };
-app.get('/api/guilds', (_req, res) => {
-  if (!client || !client.isReady()) return res.json([]);
-  res.json(client.guilds.cache.map((g) => ({ id: g.id, name: g.name, icon: g.iconURL({ size: 64 }), members: g.memberCount })));
+app.get('/api/guilds', dashAuth, (req, res) => {
+  if (!client || !client.isReady()) return res.json({ guilds: [], online: false });
+  const list = client.guilds.cache.filter((g) => req.sess.admin || req.sess.guilds.has(g.id));
+  res.json({ online: true, guilds: list.map((g) => ({ id: g.id, name: g.name, icon: g.iconURL({ size: 64 }), members: g.memberCount })) });
 });
-app.get('/api/guild/:id', wrap(async (req, res) => { const g = guildOf(req, res); if (g) res.json(uiMod.webGuild(g)); }));
-app.post('/api/guild/:id/mod/:mod', wrap(async (req, res) => { const g = guildOf(req, res); if (g) res.json(await uiMod.webApply(g, req.params.mod, req.body || {})); }));
-app.post('/api/guild/:id/act/:mod/:key', wrap(async (req, res) => { const g = guildOf(req, res); if (g) res.json(await uiMod.webAct(g, req.params.mod, req.params.key)); }));
-app.post('/api/guild/:id/install', wrap(async (req, res) => { const g = guildOf(req, res); if (g) res.json(await uiMod.webInstall(g, (req.body || {}).ids)); }));
+app.get('/api/guild/:id', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(uiMod.webGuild(g)); }));
+app.post('/api/guild/:id/mod/:mod', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webApply(g, req.params.mod, req.body || {})); }));
+app.post('/api/guild/:id/act/:mod/:key', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webAct(g, req.params.mod, req.params.key)); }));
+app.post('/api/guild/:id/install', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webInstall(g, (req.body || {}).ids)); }));
 
 app.listen(PORT, () => {
   console.log('Panel listo en el puerto ' + PORT);

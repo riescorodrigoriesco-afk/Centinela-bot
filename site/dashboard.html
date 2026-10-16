@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Centinela · Panel</title>
+<title>Centinela · Configurar</title>
 <style>
 :root{--night:#0b1626;--deep:#101f35;--line:#22344f;--fog:#c9d4e3;--mute:#8ea0b8;--ok:#3fd0b0;--bad:#ff5a4e;--white:#f4f7fb}
 *{box-sizing:border-box;margin:0}
@@ -41,7 +41,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
 <body>
 <div class="app">
   <aside>
-    <a href="index.html">← Token y estado</a>
+    <div id="who"></div>
     <h2>Servidor</h2>
     <select class="srv" id="srv" aria-label="Servidor"></select>
     <h2>Módulos</h2>
@@ -58,13 +58,35 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
   function toast(t,bad){var e=$('#toast');e.textContent=t;e.className='toast'+(bad?' err':'');e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(function(){e.hidden=true},3500)}
   function el(tag,attrs,kids){var e=document.createElement(tag);for(var k in (attrs||{})){if(k==='text')e.textContent=attrs[k];else if(k==='on')for(var ev in attrs.on)e.addEventListener(ev,attrs.on[ev]);else e.setAttribute(k,attrs[k])}(kids||[]).forEach(function(c){if(c)e.appendChild(c)});return e}
 
+  function loginView(msg,oauth){
+    var m=$('#main');m.innerHTML='';$('#who').innerHTML='';
+    var c=el('div',{class:'card'});
+    c.appendChild(el('h3',{text:'Configura tu servidor'}));
+    c.appendChild(el('p',{class:'sub',text:msg||'Inicia sesión con Discord para configurar los servidores donde eres administrador y tienes a Centinela.'}));
+    var row=el('div',{class:'row'});
+    if(oauth)row.appendChild(el('a',{class:'btn',href:'/auth/login',text:'Iniciar sesión con Discord'}));
+    row.appendChild(el('a',{class:'btn sec',href:'/auth/admin',text:'Soy el administrador del bot'}));
+    c.appendChild(row);m.appendChild(c);
+    var aside=document.querySelector('aside');aside.style.display='none';document.querySelector('.app').style.gridTemplateColumns='1fr';
+  }
+  var ERR={nosecret:'El inicio de sesión con Discord todavía no está activado en este bot. Falta añadir DISCORD_CLIENT_SECRET en Railway y la redirección en el Developer Portal.',state:'La sesión caducó. Inténtalo otra vez.',token:'Discord no aceptó el inicio de sesión. Revisa el secreto y la redirección en el Developer Portal.'};
   function loadGuilds(){
-    api('GET','/api/guilds').then(function(l){
+    api('GET','/api/me').then(function(me){
+      var e=new URLSearchParams(location.search).get('e');
+      if(!me.loggedIn)return loginView(ERR[e],me.oauth);
+      var w=$('#who');w.innerHTML='';
+      w.appendChild(el('p',{class:'sub',text:me.name+(me.admin?' (administrador)':'')}));
+      w.appendChild(el('a',{href:'/auth/logout',text:'Cerrar sesión'}));
+      return api('GET','/api/guilds').then(function(r){list(r.guilds,r.online)});
+    }).catch(function(e){$('#main').textContent=e.message});
+  }
+  function list(l,online){
+    {
       var s=$('#srv');s.innerHTML='';
-      if(!l.length){$('#main').innerHTML='';$('#main').appendChild(el('p',{class:'sub',text:'El bot no está en línea o no está en ningún servidor. Conéctalo en la página de token e invítalo a tu servidor.'}));return}
+      if(!l.length){$('#main').innerHTML='';$('#main').appendChild(el('p',{class:'sub',text:online?'No encontramos servidores tuyos donde esté Centinela. Invítalo desde la página principal y vuelve aquí.':'El bot no está en línea ahora mismo.'}));return}
       l.forEach(function(g){s.appendChild(el('option',{value:g.id,text:g.name+' ('+g.members+')'}))});
       s.onchange=function(){load(s.value)};load(s.value);
-    }).catch(function(e){$('#main').textContent=e.message});
+    }
   }
   function load(id){api('GET','/api/guild/'+id).then(function(g){G=g;nav();show(cur)}).catch(function(e){toast(e.message,1)})}
   function nav(){
