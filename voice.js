@@ -139,6 +139,19 @@ async function transcribe(pcm, lang) {
   return String(j.text || '').trim();
 }
 
+const modelCache = {};
+async function pickModel(k) {
+  const base = k.url.replace(/\/chat\/completions$/, '');
+  const r = await fetch(base + '/models', { headers: { Authorization: 'Bearer ' + k.key } });
+  if (!r.ok) throw new Error('models ' + r.status);
+  const ids = ((await r.json()).data || []).map((m) => m.id);
+  const pref = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.1-8b-instant', 'gpt-4o-mini'];
+  const pick = pref.find((p) => ids.includes(p)) || ids.find((i) => !/whisper|guard|tts|embed|moderation|image|audio|realtime|transcribe/i.test(i));
+  if (!pick) throw new Error('sin modelo disponible');
+  console.log('[voz] modelo elegido: ' + pick);
+  return pick;
+}
+
 async function think(s, who, text, cfg) {
   const k = keys().brain;
   if (!k) throw new Error('no-brain');
@@ -157,12 +170,17 @@ async function think(s, who, text, cfg) {
     const j = await r.json();
     out = (j.content || []).map((c) => c.text || '').join(' ');
   } else {
-    const r = await fetch(k.url, {
+    const call = (model) => fetch(k.url, {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + k.key, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: k.model, max_tokens: 220, messages: [{ role: 'system', content: system }, ...s.history] }),
+      body: JSON.stringify({ model, max_tokens: 220, messages: [{ role: 'system', content: system }, ...s.history] }),
     });
-    if (!r.ok) throw new Error('brain ' + r.status);
+    let r = await call(modelCache[k.url] || k.model);
+    if ((r.status === 404 || r.status === 400) && !process.env.VOICE_MODEL) {
+      modelCache[k.url] = await pickModel(k);
+      r = await call(modelCache[k.url]);
+    }
+    if (!r.ok) { console.log('[voz] cerebro falló: ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 200)); throw new Error('brain ' + r.status); }
     const j = await r.json();
     out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
   }
@@ -221,7 +239,7 @@ async function speak(s, text, lang, gender) {
     // Genera todos los trozos a la vez y los reproduce en orden (menos espera entre frases)
     const jobs = chunks(text).map((c) => tts(c, lang, gender));
     for (const job of jobs) {
-      const mp3 = await job;
+      const mp3 = await job.catch((e) => { console.log('[voz] TTS falló: ' + e.message); throw e; });
       const res = V.createAudioResource(Readable.from(mp3), { inputType: V.StreamType.Arbitrary });
       s.player.play(res);
       await V.entersState(s.player, V.AudioPlayerStatus.Playing, 5000).catch(() => {});
@@ -360,7 +378,7 @@ async function join(i) {
   await i.editReply({ embeds: [e], components: [row] });
   if (k.stt && k.brain) {
     s.busy = true;
-    speak(s, L(lc, 'Hey! I am here. What is up?', '¡Ey, hola! Ya estoy aquí. ¿Qué cuentas?'), cfg.voice.lang, cfg.voice.gender).catch(() => {}).finally(() => { s.busy = false; });
+    speak(s, L(lc, 'Hey! I am here. What is up?', '¡Ey, hola! Ya estoy aquí. ¿Qué cuentas?'), cfg.voice.lang, cfg.voice.gender).catch((e) => console.log('[voz] saludo falló: ' + e.message)).finally(() => { s.busy = false; });
   }
 }
 
