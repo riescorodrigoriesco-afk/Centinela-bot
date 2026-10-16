@@ -66,7 +66,7 @@ const mods = [
   {
     id: 'voice', ico: '🎙️', inst: false, n: ['Voice chat', 'Chat de voz'], d: ['Talk to the bot in a voice channel (/putbot). It listens, thinks and answers out loud', 'Habla con el bot en un canal de voz (/putbot). Te escucha, piensa y te responde en voz alta'],
     on: ['voice', 'enabled'],
-    filters: [{ k: 'transcript', path: ['voice', 'transcript'], n: ['Write what is said in the channel chat', 'Escribir lo que se dice en el chat del canal'] }],
+    filters: [{ k: 'roast', path: ['voice', 'roast'], n: ['Answer insults with a comeback and mute them 5 min', 'Responder a insultos y dejar callado 5 min'] }, { k: 'transcript', path: ['voice', 'transcript'], n: ['Write what is said in the channel chat', 'Escribir lo que se dice en el chat del canal'] }],
     fields: [
       { k: 'lang', path: ['voice', 'lang'], t: 'choice', c: Object.keys(LANGS), l: ['Language: ' + Object.keys(LANGS).join(' / '), 'Idioma: ' + Object.keys(LANGS).join(' / ')] },
       { k: 'gender', path: ['voice', 'gender'], t: 'choice', c: ['female', 'male'], l: ['Voice: female / male', 'Voz: female / male'] },
@@ -156,7 +156,7 @@ async function think(s, who, text, cfg, written) {
   const k = keys().brain;
   if (!k) throw new Error('no-brain');
   const lang = LANGS[cfg.voice.lang] || LANGS.es;
-  const system = 'You are Centinela, a Discord bot having a live spoken conversation in a voice channel. Talk like a warm, relaxed friend would: natural, casual and expressive, with light humor, short reactions (like "ah, vaya", "uf", "claro") and, now and then, a brief follow-up question. Answer in ' + lang.en + ' ' + (written ? 'in a clear, helpful way (up to a short paragraph; you may use a few emojis; plain text, no markdown headers), like a smart AI assistant chatting in Discord.' : 'in one to three short sentences, as spoken language: contractions, no markdown, no lists, no emojis, no stage directions.') + ' Do not claim to be human or to have a body or a real life; if someone asks what you are, say you are a bot, honestly and with good humor. Be accurate: if you do not know something, say so. The speaker is ' + who + '.' + (cfg.voice.persona ? ' Extra personality: ' + cfg.voice.persona : '');
+  const system = 'You are Centinela, a Discord bot having a live spoken conversation in a voice channel. Talk like a warm, relaxed friend would: natural, casual and expressive, with light humor, short reactions (like "ah, vaya", "uf", "claro") and, now and then, a brief follow-up question. Answer in ' + lang.en + ' ' + (written ? 'in a clear, helpful way (up to a short paragraph; you may use a few emojis; plain text, no markdown headers), like a smart AI assistant chatting in Discord.' : 'in one to three short sentences, as spoken language: contractions, no markdown, no lists, no emojis, no stage directions.') + ' If the speaker insults you or talks to you with disrespect, start your reply with the exact tag [ROAST] followed by one witty, sarcastic, cutting comeback that leaves them speechless, aimed at what they said or their attitude; never mock race, ethnicity, gender, sexuality, religion, disability, appearance, family or anything personal beyond their behavior, and no slurs or threats. Normal friendly messages never get the tag. Do not claim to be human or to have a body or a real life; if someone asks what you are, say you are a bot, honestly and with good humor. Be accurate: if you do not know something, say so. The speaker is ' + who + '.' + (cfg.voice.persona ? ' Extra personality: ' + cfg.voice.persona : '');
   s.history.push({ role: 'user', content: text });
   s.history = s.history.slice(-8);
   let out = '';
@@ -185,6 +185,8 @@ async function think(s, who, text, cfg, written) {
     out = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
   }
   out = out.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/[*_`#>]/g, '').trim();
+  s.roast = /^\s*\[ROAST\]/i.test(out);
+  out = out.replace(/\[ROAST\]/gi, '').trim();
   if (!out) console.log('[voz] el modelo devolvió una respuesta vacía');
   s.history.push({ role: 'assistant', content: out });
   return out;
@@ -278,6 +280,7 @@ async function onUtterance(s, guild, userId, pcm) {
       if (ch) ch.send({ content: '🎤 **' + who.replace(/[*_`@]/g, '') + ':** ' + text.slice(0, 300) + '\n🤖 ' + answer.slice(0, 400), allowedMentions: { parse: [] } }).catch(() => {});
     }
     await speak(s, answer, cfg.voice.lang, cfg.voice.gender);
+    if (s.roast) await silence(guild, member, cfg);
   } catch (e) {
     if (e.message === 'no-stt' || e.message === 'no-brain') {
       const ch = s.textChannelId && guild.channels.cache.get(s.textChannelId);
@@ -427,6 +430,16 @@ async function handleComponent(i) {
   return true;
 }
 
+// Si alguien insulta al bot: respuesta cortante y lo deja callado unos minutos (aislamiento temporal)
+async function silence(guild, member, cfg) {
+  try {
+    if (!member || cfg.voice.roast === false) return;
+    if (member.permissions.has(P.Administrator) || member.permissions.has(P.ManageGuild) || member.id === guild.ownerId) return;
+    if (!guild.members.me || !guild.members.me.permissions.has(P.ModerateMembers) || !member.moderatable) return;
+    await member.timeout(5 * 60 * 1000, 'Centinela: insultó al bot');
+  } catch (e) { logErr(e); }
+}
+
 /* ============================ charlar por el chat (menciona al bot) ============================ */
 const chatHist = new Map(); // canal -> { history }
 const chatRate = new Map();
@@ -448,7 +461,8 @@ function attach(client) {
       if (!st) { st = { history: [] }; chatHist.set(msg.channelId, st); }
       const answer = await think(st, msg.member ? msg.member.displayName : msg.author.username, text.slice(0, 1500), cfg, true);
       if (!answer) return;
-      await msg.reply({ content: answer.slice(0, 1900), allowedMentions: { parse: [], repliedUser: false } });
+      await msg.reply({ content: (st.roast ? '🔥 ' : '') + answer.slice(0, 1900), allowedMentions: { parse: [], repliedUser: false } });
+      if (st.roast) await silence(msg.guild, msg.member, cfg);
     } catch (e) {
       if (e.message === 'no-brain') msg.reply('⚠️ ' + L(msg.guild.preferredLocale, 'I need an API key (`GROQ_API_KEY`) to chat.', 'Necesito una clave (`GROQ_API_KEY`) para charlar.')).catch(() => {});
       else logErr(e);
