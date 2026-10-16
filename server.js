@@ -168,8 +168,9 @@ async function setDescription(c) {
   try {
     const rest = new REST({ version: '10' }).setToken(config.token);
     const description = '🛡️ Antiraid extremo, bienvenidas, autoroles, tickets y más. Usa /help y /guía.\nWeb y panel: ' + SITE_URL;
-    await rest.patch(Routes.currentApplication(), { body: { description, install_params: null, custom_install_url: SITE_URL } });
-    log('Descripción y botón «Añadir app» apuntan a la web: ' + SITE_URL);
+    await rest.patch(Routes.currentApplication(), { body: { description, install_params: null, custom_install_url: SITE_URL + '/dashboard.html' } });
+    const me = await rest.get(Routes.currentApplication());
+    log('«Añadir app» → ' + (me.custom_install_url || 'SIN URL personalizada') + ' · install_params: ' + JSON.stringify(me.install_params || null));
   } catch (e) {
     log('No se pudo actualizar la descripción del bot: ' + e.message);
   }
@@ -453,8 +454,9 @@ app.get('/auth/callback', async (req, res) => {
     const h = { Authorization: 'Bearer ' + tok.access_token };
     const me = await (await fetch('https://discord.com/api/v10/users/@me', { headers: h })).json();
     const gl = await (await fetch('https://discord.com/api/v10/users/@me/guilds', { headers: h })).json();
-    const manage = new Set((Array.isArray(gl) ? gl : []).filter((g) => g.owner || (BigInt(g.permissions || 0) & 0x28n) !== 0n).map((g) => g.id));
-    startSession(req, res, { admin: false, uid: me.id, name: me.global_name || me.username, avatar: me.avatar ? 'https://cdn.discordapp.com/avatars/' + me.id + '/' + me.avatar + '.png?size=64' : null, guilds: manage });
+    const manageList = (Array.isArray(gl) ? gl : []).filter((g) => g.owner || (BigInt(g.permissions || 0) & 0x28n) !== 0n).map((g) => ({ id: g.id, name: g.name }));
+    const manage = new Set(manageList.map((g) => g.id));
+    startSession(req, res, { admin: false, uid: me.id, name: me.global_name || me.username, avatar: me.avatar ? 'https://cdn.discordapp.com/avatars/' + me.id + '/' + me.avatar + '.png?size=64' : null, guilds: manage, manageList });
     res.redirect('/dashboard.html');
   } catch (e) {
     log('Login con Discord falló: ' + e.message);
@@ -502,9 +504,13 @@ const wrap = (fn) => async (req, res) => {
   try { await fn(req, res); } catch (e) { res.status(400).json({ error: e.message }); }
 };
 app.get('/api/guilds', dashAuth, (req, res) => {
-  if (!client || !client.isReady()) return res.json({ guilds: [], online: false });
-  const list = client.guilds.cache.filter((g) => req.sess.admin || req.sess.guilds.has(g.id));
-  res.json({ online: true, guilds: list.map((g) => ({ id: g.id, name: g.name, icon: g.iconURL({ size: 64 }), members: g.memberCount })) });
+  const online = !!(client && client.isReady());
+  const inv = (gid) => 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(config.id) + '&scope=bot%20applications.commands&permissions=' + botMod.INVITE_PERMS + '&guild_id=' + gid + '&disable_guild_select=true';
+  const present = online ? client.guilds.cache.filter((g) => req.sess.admin || req.sess.guilds.has(g.id)) : [];
+  const guilds = online ? present.map((g) => ({ id: g.id, name: g.name, icon: g.iconURL({ size: 64 }), members: g.memberCount })) : [];
+  const have = new Set(guilds.map((g) => g.id));
+  const available = !req.sess.admin && config.id ? (req.sess.manageList || []).filter((g) => !have.has(g.id)).map((g) => ({ id: g.id, name: g.name, invite: inv(g.id) })) : [];
+  res.json({ online, guilds, available });
 });
 app.get('/api/guild/:id', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(uiMod.webGuild(g)); }));
 app.post('/api/guild/:id/mod/:mod', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webApply(g, req.params.mod, req.body || {})); }));

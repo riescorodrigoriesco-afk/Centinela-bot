@@ -18,7 +18,7 @@ aside button.item:hover{background:#16294a}
 aside button.item[aria-current=true]{background:#1b3358;color:var(--white)}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--line);margin-top:8px;flex:none}.dot.on{background:var(--ok)}
 select.srv{width:100%;background:var(--night);color:var(--white);border:1px solid var(--line);padding:10px;border-radius:8px;font:inherit}
-main{padding:28px;max-width:820px}
+main{padding:28px;max-width:980px;width:100%}
 h1{color:var(--white);font-size:1.6rem;margin-bottom:4px}
 .sub{color:var(--mute);margin-bottom:22px}
 .card{background:var(--deep);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
@@ -34,6 +34,10 @@ textarea{min-height:90px}
 .check input{width:18px;height:18px;accent-color:var(--ok)}
 .toast{position:fixed;bottom:18px;right:18px;background:var(--white);color:#0b1626;padding:12px 16px;border-radius:10px;max-width:340px;box-shadow:0 8px 30px #0008}
 .err{color:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+button.modcard{text-align:left;cursor:pointer;color:inherit;font:inherit;margin:0}
+button.modcard:hover,.srvcard:hover{border-color:var(--ok)}
+.srvcard .btn{display:inline-block;text-decoration:none;margin-top:6px}
 pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;border:1px solid var(--line)}
 @media(max-width:760px){.app{grid-template-columns:1fr}aside{position:static;max-height:none}main{padding:18px}}
 </style>
@@ -42,6 +46,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
 <div class="app">
   <aside>
     <div id="who"></div>
+    <p><a href="#" id="back">← Todos mis servidores</a></p>
     <h2>Servidor</h2>
     <select class="srv" id="srv" aria-label="Servidor"></select>
     <h2>Módulos</h2>
@@ -61,10 +66,10 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
   function loginView(msg,oauth){
     var m=$('#main');m.innerHTML='';$('#who').innerHTML='';
     var c=el('div',{class:'card'});
-    c.appendChild(el('h3',{text:'Configura tu servidor'}));
-    c.appendChild(el('p',{class:'sub',text:msg||'Inicia sesión con Discord para configurar los servidores donde eres administrador y tienes a Centinela.'}));
+    c.appendChild(el('h3',{text:'Bienvenido a Centinela'}));
+    c.appendChild(el('p',{class:'sub',text:msg||'Entra con Discord, autoriza la app, añade a Centinela a tu servidor y personalízalo todo desde aquí.'}));
     var row=el('div',{class:'row'});
-    if(oauth)row.appendChild(el('a',{class:'btn',href:'/auth/login',text:'Iniciar sesión con Discord'}));
+    if(oauth)row.appendChild(el('a',{class:'btn',href:'/auth/login',text:'Login with Discord'}));
     row.appendChild(el('a',{class:'btn sec',href:'/auth/admin',text:'Soy el administrador del bot'}));
     c.appendChild(row);m.appendChild(c);
     var aside=document.querySelector('aside');aside.style.display='none';document.querySelector('.app').style.gridTemplateColumns='1fr';
@@ -77,17 +82,50 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
       var w=$('#who');w.innerHTML='';
       w.appendChild(el('p',{class:'sub',text:me.name+(me.admin?' (administrador)':'')}));
       w.appendChild(el('a',{href:'/auth/logout',text:'Cerrar sesión'}));
-      return api('GET','/api/guilds').then(function(r){list(r.guilds,r.online)});
+      return api('GET','/api/guilds').then(function(r){pickerView(r)});
     }).catch(function(e){$('#main').textContent=e.message});
   }
-  function list(l,online){
-    {
-      var s=$('#srv');s.innerHTML='';
-      if(!l.length){$('#main').innerHTML='';$('#main').appendChild(el('p',{class:'sub',text:online?'No encontramos servidores tuyos donde esté Centinela. Invítalo desde la página principal y vuelve aquí.':'El bot no está en línea ahora mismo.'}));return}
-      l.forEach(function(g){s.appendChild(el('option',{value:g.id,text:g.name+' ('+g.members+')'}))});
-      s.onchange=function(){load(s.value)};load(s.value);
-    }
+  var pollT=null;
+  function layout(sidebar){
+    document.querySelector('aside').style.display=sidebar?'':'none';
+    document.querySelector('.app').style.gridTemplateColumns=sidebar?'':'1fr';
   }
+  function pickerView(r){
+    clearInterval(pollT);layout(false);
+    var m=$('#main');m.innerHTML='';
+    var top=el('div',{class:'row',style:'justify-content:space-between;margin-bottom:18px'},[el('div',{},[el('h1',{text:'Tus servidores'}),el('p',{class:'sub',text:'Elige uno para configurarlo o añade a Centinela.'})]),el('div',{id:'who2'})]);
+    m.appendChild(top);
+    if(!r.online)m.appendChild(el('p',{class:'err',text:'El bot no está en línea ahora mismo.'}));
+    var grid=el('div',{class:'grid'});
+    r.guilds.forEach(function(g){
+      grid.appendChild(el('div',{class:'card srvcard'},[el('h3',{text:g.name}),el('p',{class:'sub',text:g.members+' miembros · Centinela instalado'}),
+        el('button',{class:'btn',text:'Configurar',on:{click:function(){openGuild(g.id,r.guilds)}}})]));
+    });
+    (r.available||[]).forEach(function(g){
+      grid.appendChild(el('div',{class:'card srvcard'},[el('h3',{text:g.name}),el('p',{class:'sub',text:'Centinela todavía no está aquí'}),
+        el('a',{class:'btn sec',href:g.invite,target:'_blank',rel:'noopener',text:'Añadir a Centinela',on:{click:function(){waitFor(g.id)}}})]));
+    });
+    if(!r.guilds.length&&!(r.available||[]).length)m.appendChild(el('p',{class:'sub',text:'No encontramos servidores donde tengas permiso de administrar. Crea uno o pide que te den el permiso «Gestionar servidor».'}));
+    m.appendChild(grid);
+    api('GET','/api/me').then(function(me){var w=$('#who2');if(!w)return;w.appendChild(el('span',{class:'sub',text:me.name+'  '}));w.appendChild(el('a',{href:'/auth/logout',text:'Cerrar sesión'}))});
+  }
+  function waitFor(gid){
+    var n=0;clearInterval(pollT);toast('Cuando termines de añadir el bot, te llevo a configurarlo.');
+    pollT=setInterval(function(){
+      if(++n>45){clearInterval(pollT);return}
+      api('GET','/api/guilds').then(function(r){
+        if(r.guilds.some(function(g){return g.id===gid})){clearInterval(pollT);openGuild(gid,r.guilds)}
+      }).catch(function(){});
+    },4000);
+  }
+  function openGuild(id,guilds){
+    layout(true);
+    var s=$('#srv');s.innerHTML='';
+    guilds.forEach(function(g){var o=el('option',{value:g.id,text:g.name});if(g.id===id)o.selected=true;s.appendChild(o)});
+    s.onchange=function(){load(s.value)};
+    cur='home';load(id);
+  }
+  function list(l,online,avail){pickerView({guilds:l,online:online,available:avail})}
   function load(id){api('GET','/api/guild/'+id).then(function(g){G=g;nav();show(cur)}).catch(function(e){toast(e.message,1)})}
   function nav(){
     var n=$('#nav');n.innerHTML='';
@@ -107,7 +145,14 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
   function home(m){
     m.appendChild(el('h1',{text:G.name}));
     m.appendChild(el('p',{class:'sub',text:G.members+' miembros · '+G.mods.filter(function(x){return x.on}).length+' módulos activos'}));
-    var c=el('div',{class:'card'});c.appendChild(el('h3',{text:'Instalar módulos'}));
+    m.appendChild(el('h3',{text:'Personaliza cada cosa',style:'color:#f4f7fb;margin:6px 0 10px'}));
+    var mg=el('div',{class:'grid'});
+    G.mods.forEach(function(x){
+      mg.appendChild(el('button',{class:'card modcard',on:{click:function(){cur=x.id;nav();show(x.id)}}},[
+        el('h3',{text:x.ico+' '+x.n+(x.on===null?'':(x.on?'  · activo':'  · apagado'))}),el('p',{class:'sub',style:'margin:0;font-size:.88rem',text:x.d})]));
+    });
+    m.appendChild(mg);
+    var c=el('div',{class:'card',style:'margin-top:22px'});c.appendChild(el('h3',{text:'Instalar módulos'}));
     c.appendChild(el('p',{class:'sub',text:'Marca lo que quieras activar. Se crean los canales y roles necesarios y se enciende cada función.'}));
     var boxes={};
     G.mods.filter(function(x){return x.installable}).forEach(function(x){
@@ -161,6 +206,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     }}})}))));
     card.appendChild(res);m.appendChild(card);
   }
+  $('#back').addEventListener('click',function(e){e.preventDefault();api('GET','/api/guilds').then(pickerView)});
   loadGuilds();
 })();
 </script>
