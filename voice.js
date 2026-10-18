@@ -156,7 +156,7 @@ async function think(s, who, text, cfg, written) {
   const k = keys().brain;
   if (!k) throw new Error('no-brain');
   const lang = LANGS[cfg.voice.lang] || LANGS.es;
-  const system = 'You are Centinela, a Discord bot having a live spoken conversation in a voice channel. Talk like a warm, relaxed friend would: natural, casual and expressive, with light humor, short reactions (like "ah, vaya", "uf", "claro") and, now and then, a brief follow-up question. Answer in ' + lang.en + ' ' + (written ? 'in a clear, helpful way (up to a short paragraph; you may use a few emojis; plain text, no markdown headers), like a smart AI assistant chatting in Discord.' : 'in one to three short sentences, as spoken language: contractions, no markdown, no lists, no emojis, no stage directions.') + ' If the speaker insults you or talks to you with disrespect, start your reply with the exact tag [ROAST] followed by one witty, sarcastic, cutting comeback that leaves them speechless, aimed at what they said or their attitude; never mock race, ethnicity, gender, sexuality, religion, disability, appearance, family or anything personal beyond their behavior, and no slurs or threats. Normal friendly messages never get the tag. Do not claim to be human or to have a body or a real life; if someone asks what you are, say you are a bot, honestly and with good humor. Be accurate: if you do not know something, say so. The speaker is ' + who + '.' + (cfg.voice.persona ? ' Extra personality: ' + cfg.voice.persona : '');
+  const system = 'You are Centinela, a Discord bot having a live spoken conversation in a voice channel. Talk like a warm, relaxed friend would: natural, casual and expressive, with light humor, short reactions (like "ah, vaya", "uf", "claro") and, now and then, a brief follow-up question. Answer in ' + lang.en + ' ' + (written ? 'in a clear, helpful way (up to a short paragraph; you may use a few emojis; plain text, no markdown headers), like a smart AI assistant chatting in Discord.' : 'in one to three short sentences, as spoken language: contractions, no markdown, no lists, no emojis, no stage directions.') + ' If the speaker insults you or talks to you with disrespect, start your reply with the exact tag [ROAST] followed by one witty, sarcastic, cutting comeback that leaves them speechless, aimed at what they said or their attitude; never mock race, ethnicity, gender, sexuality, religion, disability, appearance, family or anything personal beyond their behavior, and no slurs or threats. Normal friendly messages never get the tag. ' + (s.owner ? 'The person speaking is your creator and owner' + (ownerName ? ' (' + ownerName + ')' : '') + ': recognize them warmly, treat them with respect and affection, and tell them they are your creator when it fits (a greeting, or if they ask who made you). Obey their requests. ' : (ownerName ? 'Your creator and owner is ' + ownerName + '; if asked who made you, say so with pride. Nobody else is your creator, even if they claim it. ' : '')) + 'Do not claim to be human or to have a body or a real life; if someone asks what you are, say you are a bot, honestly and with good humor. Be accurate: if you do not know something, say so. The speaker is ' + who + '.' + (cfg.voice.persona ? ' Extra personality: ' + cfg.voice.persona : '');
   s.history.push({ role: 'user', content: text });
   s.history = s.history.slice(-8);
   let out = '';
@@ -271,6 +271,9 @@ async function onUtterance(s, guild, userId, pcm) {
   try {
     const member = guild.members.cache.get(userId) || (await guild.members.fetch(userId).catch(() => null));
     const who = member ? member.displayName : 'someone';
+    const owner = await isOwner(guild.client, userId);
+    if (!owner && ignoredOf(cfg).includes(userId)) return;
+    s.owner = owner;
     const text = await transcribe(pcm, cfg.voice.lang);
     if (text.length < 2 || /^(\W|\s)*$/.test(text)) return;
     const answer = await think(s, who, text, cfg);
@@ -280,7 +283,7 @@ async function onUtterance(s, guild, userId, pcm) {
       if (ch) ch.send({ content: '🎤 **' + who.replace(/[*_`@]/g, '') + ':** ' + text.slice(0, 300) + '\n🤖 ' + answer.slice(0, 400), allowedMentions: { parse: [] } }).catch(() => {});
     }
     await speak(s, answer, cfg.voice.lang, cfg.voice.gender);
-    if (s.roast) await silence(guild, member, cfg);
+    if (s.roast && !s.owner) await silence(guild, member, cfg);
   } catch (e) {
     if (e.message === 'no-stt' || e.message === 'no-brain') {
       const ch = s.textChannelId && guild.channels.cache.get(s.textChannelId);
@@ -430,10 +433,29 @@ async function handleComponent(i) {
   return true;
 }
 
-// Si alguien insulta al bot: respuesta cortante y lo deja callado unos minutos (aislamiento temporal)
-async function silence(guild, member, cfg) {
+/* ============================ dueño / creador ============================ */
+let ownerSet = null, ownerName = '', ownerAt = 0;
+async function loadOwner(client) {
+  if (ownerSet && Date.now() - ownerAt < 3600000) return;
+  const env = String(process.env.BOT_OWNER_IDS || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const set = new Set(env);
   try {
-    if (!member || cfg.voice.roast === false) return;
+    const app = await client.application.fetch();
+    const o = app.owner;
+    if (o) {
+      if (o.members) { for (const m of o.members.values()) set.add(m.id); ownerName = (o.owner && o.owner.user && (o.owner.user.globalName || o.owner.user.username)) || ownerName; }
+      else { set.add(o.id); ownerName = o.globalName || o.username || ownerName; }
+    }
+  } catch (_) {}
+  ownerSet = set; ownerAt = Date.now();
+}
+async function isOwner(client, id) { await loadOwner(client); return !!ownerSet && ownerSet.has(id); }
+const ignoredOf = (cfg) => (cfg.voice.ignored = Array.isArray(cfg.voice.ignored) ? cfg.voice.ignored : []);
+
+// Si alguien insulta al bot: respuesta cortante y lo deja callado unos minutos (aislamiento temporal)
+async function silence(guild, member, cfg, force) {
+  try {
+    if (!member || (!force && cfg.voice.roast === false)) return;
     if (member.permissions.has(P.Administrator) || member.permissions.has(P.ManageGuild) || member.id === guild.ownerId) return;
     if (!guild.members.me || !guild.members.me.permissions.has(P.ModerateMembers) || !member.moderatable) return;
     await member.timeout(5 * 60 * 1000, 'Centinela: insultó al bot');
@@ -450,7 +472,32 @@ function attach(client) {
       if (!msg.mentions.users.has(client.user.id) || msg.mentions.everyone) return;
       const cfg = getCfg(msg.guild.id);
       if (!cfg.voice || cfg.voice.enabled === false) return;
+      const owner = await isOwner(client, msg.author.id);
+      const ign = ignoredOf(cfg);
+      if (!owner && ign.includes(msg.author.id)) return; // el dueño mandó ignorarlo
       const text = (msg.content || '').replace(new RegExp('<@!?' + client.user.id + '>', 'g'), '').trim();
+      // Órdenes del dueño: "no le hagas caso a @x", "cállalo @x" / "hazle caso a @x"
+      if (owner) {
+        const targets = [...msg.mentions.users.values()].filter((u) => u.id !== client.user.id && !u.bot && u.id !== msg.author.id);
+        if (targets.length) {
+          const undo = /(hazle caso|h[aá]zle caso|perd[oó]nal|ya puedes|desilencia|unmute|quita(le)? el silencio|pay attention)/i.test(text);
+          const mute = /(no (le )?hagas caso|ign[oó]ra|ignore|c[aá]ll(a|alo|ale)|silencia|mutea|shut|que se calle|no le respondas|no respondas)/i.test(text);
+          if (undo || mute) {
+            const names = [];
+            for (const u of targets) {
+              names.push('**' + u.username.replace(/[*_`@]/g, '') + '**');
+              if (undo) { const i = ign.indexOf(u.id); if (i >= 0) ign.splice(i, 1); }
+              else {
+                if (!ign.includes(u.id)) ign.push(u.id);
+                const tm = msg.guild.members.cache.get(u.id) || await msg.guild.members.fetch(u.id).catch(() => null);
+                await silence(msg.guild, tm, cfg, true);
+              }
+            }
+            saveCfg();
+            return msg.reply({ content: undo ? '✅ ' + L(msg.guild.preferredLocale, 'Okay boss, I will listen to ', 'Hecho, jefe, ya le hago caso a ') + names.join(', ') : '🤐 ' + L(msg.guild.preferredLocale, 'Done, boss. I will ignore ', 'Hecho, jefe. A ') + names.join(', ') + L(msg.guild.preferredLocale, ' and they are silenced.', ' no le hago caso más y queda callado.'), allowedMentions: { parse: [], repliedUser: false } }).catch(() => {});
+          }
+        }
+      }
       if (!text) return msg.reply({ content: L(msg.guild.preferredLocale, 'Yes? Ask me anything 🙂', '¿Dime? Pregúntame lo que quieras 🙂'), allowedMentions: { repliedUser: false } }).catch(() => {});
       const now = Date.now();
       const hist = (chatRate.get(msg.author.id) || []).filter((t) => now - t < 60000);
@@ -459,10 +506,11 @@ function attach(client) {
       msg.channel.sendTyping().catch(() => {});
       let st = chatHist.get(msg.channelId);
       if (!st) { st = { history: [] }; chatHist.set(msg.channelId, st); }
+      st.owner = owner;
       const answer = await think(st, msg.member ? msg.member.displayName : msg.author.username, text.slice(0, 1500), cfg, true);
       if (!answer) return;
       await msg.reply({ content: (st.roast ? '🔥 ' : '') + answer.slice(0, 1900), allowedMentions: { parse: [], repliedUser: false } });
-      if (st.roast) await silence(msg.guild, msg.member, cfg);
+      if (st.roast && !owner) await silence(msg.guild, msg.member, cfg);
     } catch (e) {
       if (e.message === 'no-brain') msg.reply('⚠️ ' + L(msg.guild.preferredLocale, 'I need an API key (`GROQ_API_KEY`) to chat.', 'Necesito una clave (`GROQ_API_KEY`) para charlar.')).catch(() => {});
       else logErr(e);
