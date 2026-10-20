@@ -187,7 +187,9 @@ async function setDescription(c) {
       const have = Array.isArray(cur.redirect_uris) ? cur.redirect_uris : [];
       if (!have.includes(want)) {
         await rest.patch(Routes.currentApplication(), { body: { redirect_uris: [...have, want] } });
-        log('Redirección OAuth2 registrada: ' + want);
+        const chk = await rest.get(Routes.currentApplication());
+        if (Array.isArray(chk.redirect_uris) && chk.redirect_uris.includes(want)) log('Redirección OAuth2 registrada: ' + want);
+        else log('⚠️ Discord NO permite registrar la redirección con el token del bot. Añádela a mano en discord.com/developers → tu app → OAuth2 → Redirects: ' + want);
       } else {
         log('Redirección OAuth2 ya registrada');
       }
