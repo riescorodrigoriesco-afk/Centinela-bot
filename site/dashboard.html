@@ -72,6 +72,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     if(oauth)row.appendChild(el('a',{class:'btn',href:'/auth/login',text:'Login with Discord'}));
     c.appendChild(row);m.appendChild(c);
     var aside=document.querySelector('aside');aside.style.display='none';document.querySelector('.app').style.gridTemplateColumns='1fr';
+    if(oauth&&!msg&&!new URLSearchParams(location.search).get('e')){c.appendChild(el('p',{class:'sub',text:'Abriendo Discord…'}));setTimeout(function(){location.replace('/auth/login')},400)}
   }
   var ERR={nosetup:'Primero conecta el token del bot en el panel.',denied:'Cancelaste la autorización. Pulsa de nuevo para continuar.',state:'La sesión caducó. Inténtalo otra vez.',token:'No se pudo iniciar sesión. Si Discord dice «redirect_uri inválido», añade https://bot-activador-production.up.railway.app/auth/callback en Developer Portal → OAuth2 → Redirects.'};
   function loadGuilds(){
@@ -129,6 +130,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
   function nav(){
     var n=$('#nav');n.innerHTML='';
     n.appendChild(item('home','🏠','Inicio e instalación',null));
+    n.appendChild(item('tpl','🧩','Plantillas de servidor',null));
     G.mods.forEach(function(m){n.appendChild(item(m.id,m.ico,m.n,m.on))});
   }
   function item(id,ico,name,on){
@@ -139,11 +141,44 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
   function show(id){
     var m=$('#main');m.innerHTML='';
     if(id==='home')return home(m);
+    if(id==='tpl')return tplView(m);
     var mod=G.mods.find(function(x){return x.id===id});if(mod)modView(m,mod);
+  }
+
+  var tplPoll=null;
+  function tplView(m){
+    clearInterval(tplPoll);
+    m.appendChild(el('h1',{text:'🧩 Plantillas de servidor'}));
+    m.appendChild(el('p',{class:'sub',text:'Crea tu servidor, añade a Centinela y elige un tipo: se crean los roles, categorías y canales con sus permisos, y se dejan listos tickets, roles por botones, autoroles, bienvenidas, niveles y antiraid. Puedes repetirlo sin duplicar nada.'}));
+    var opt=el('div',{class:'card'});
+    var cl=el('input',{type:'checkbox'});var ar=el('input',{type:'checkbox',checked:'checked'});
+    opt.appendChild(el('label',{class:'check'},[ar,el('span',{text:'Instalar antiraid y registros (recomendado)'})]));
+    opt.appendChild(el('label',{class:'check'},[cl,el('span',{text:'Quitar los canales por defecto (#general, «Canales de texto»…) — solo si el servidor es nuevo'})]));
+    m.appendChild(opt);
+    var out=el('pre',{hidden:'hidden'});
+    var grid=el('div',{class:'grid'});m.appendChild(grid);m.appendChild(out);
+    api('GET','/api/templates').then(function(r){
+      r.templates.forEach(function(t){
+        var b=el('button',{class:'btn',text:'Aplicar',on:{click:function(ev){
+          if(!confirm('¿Aplicar la plantilla «'+t.name+'» en '+G.name+'? Se crearán '+t.roles+' roles y '+t.channels+' canales (no se borra nada tuyo).'))return;
+          ev.target.disabled=true;out.hidden=false;out.textContent='Empezando…';
+          api('POST','/api/guild/'+G.id+'/template',{id:t.id,clean:cl.checked,antiraid:ar.checked}).then(function(){
+            tplPoll=setInterval(function(){
+              api('GET','/api/guild/'+G.id+'/template/status').then(function(s){
+                out.textContent=s.lines.join('\n');out.scrollTop=out.scrollHeight;
+                if(!s.running){clearInterval(tplPoll);ev.target.disabled=false;toast(s.error?'Hubo un error':'Plantilla aplicada',!!s.error);load(G.id)}
+              }).catch(function(){});
+            },1500);
+          }).catch(function(e){ev.target.disabled=false;out.textContent=e.message;toast(e.message,1)});
+        }}});
+        grid.appendChild(el('div',{class:'card'},[el('h3',{text:t.ico+' '+t.name}),el('p',{class:'sub',style:'font-size:.9rem',text:t.desc}),el('p',{class:'sub',style:'font-size:.82rem',text:t.roles+' roles · '+t.channels+' canales'}),b]));
+      });
+    }).catch(function(e){toast(e.message,1)});
   }
   function home(m){
     m.appendChild(el('h1',{text:G.name}));
     m.appendChild(el('p',{class:'sub',text:G.members+' miembros · '+G.mods.filter(function(x){return x.on}).length+' módulos activos'}));
+    m.appendChild(el('button',{class:'card modcard',style:'width:100%;margin-bottom:16px;border-color:#3fd0b0',on:{click:function(){cur='tpl';nav();show('tpl')}}},[el('h3',{text:'🧩 Plantillas de servidor'}),el('p',{class:'sub',style:'margin:0;font-size:.9rem',text:'Elige un tipo de servidor (gaming, comunidad, estudio, tienda…) y Centinela crea roles, canales, tickets, autoroles y bienvenidas por ti.'})]));
     m.appendChild(el('h3',{text:'Personaliza cada cosa',style:'color:#f4f7fb;margin:6px 0 10px'}));
     var mg=el('div',{class:'grid'});
     G.mods.forEach(function(x){

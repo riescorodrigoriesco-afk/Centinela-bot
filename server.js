@@ -11,6 +11,7 @@ const guardMod = require('./guard');
 const uiMod = require('./ui');
 const extrasMod = require('./extras');
 const voiceMod = require('./voice');
+const tplMod = require('./templates');
 
 // Comandos slash: /help, /guía, /putbot y /setidioma. El resto se maneja con menús, botones y el prefijo.
 const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands];
@@ -325,7 +326,10 @@ app.get('/health', (_req, res) => {
 });
 
 // Web pública (sin contraseña) y datos públicos
-app.use(express.static(path.join(__dirname, 'site')));
+// Al abrir la web lo primero es iniciar sesión con Discord (la presentación queda en /info)
+app.get('/', (_req, res) => res.redirect('/dashboard.html'));
+app.get('/info', (_req, res) => res.sendFile(path.join(__dirname, 'site', 'index.html')));
+app.use(express.static(path.join(__dirname, 'site'), { index: false }));
 app.get('/api/public', (_req, res) => {
   const online = client && client.isReady();
   res.json({
@@ -575,6 +579,14 @@ app.get('/api/guilds', dashAuth, (req, res) => {
 app.get('/api/guild/:id', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(uiMod.webGuild(g)); }));
 app.post('/api/guild/:id/mod/:mod', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webApply(g, req.params.mod, req.body || {})); }));
 app.post('/api/guild/:id/act/:mod/:key', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webAct(g, req.params.mod, req.params.key)); }));
+app.get('/api/templates', dashAuth, (_req, res) => res.json({ templates: tplMod.LIST() }));
+app.post('/api/guild/:id/template', dashAuth, wrap(async (req, res) => {
+  const g = await guildOf(req, res); if (!g) return;
+  const b = req.body || {};
+  const job = tplMod.start(g, String(b.id || ''), { clean: !!b.clean, antiraid: b.antiraid !== false, userId: req.sess.admin ? null : req.sess.uid });
+  res.json({ started: true, lines: job.lines });
+}));
+app.get('/api/guild/:id/template/status', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(tplMod.status(g.id)); }));
 app.post('/api/guild/:id/install', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webInstall(g, (req.body || {}).ids)); }));
 
 app.listen(PORT, () => {

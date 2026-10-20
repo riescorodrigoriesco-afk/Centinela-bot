@@ -476,6 +476,38 @@ def({
 });
 
 def({
+  name: 'plantilla',
+  aliases: ['plantillas', 'template', 'templates'],
+  level: 'cfg',
+  perm: P.ManageGuild,
+  d: 'Server templates: creates roles, channels, tickets and setup for a server type',
+  es: 'Plantillas de servidor: crea roles, canales, tickets y configuración según el tipo de servidor',
+  async run(ctx) {
+    const tpl = require('./templates');
+    const id = String(ctx.arg(0) || '').toLowerCase();
+    const p = prefixOf(ctx);
+    if (!id || !tpl.T[id]) {
+      return ctx.reply(T(ctx, 'Pick a template: ', 'Elige una plantilla: ') + '\n' + tpl.LIST().map((x) => x.ico + ' `' + x.id + '` — ' + x.desc).join('\n') + '\n\n' + T(ctx, 'Apply with ', 'Aplícala con ') + '`' + p + 'plantilla <' + T(ctx, 'name', 'nombre') + '> confirm`');
+    }
+    if (String(ctx.arg(1) || '').toLowerCase() !== 'confirm') {
+      const x = tpl.LIST().find((y) => y.id === id);
+      return ctx.reply(T(ctx, 'This will create ', 'Esto creará ') + x.roles + T(ctx, ' roles and ', ' roles y ') + x.channels + T(ctx, ' channels (nothing of yours is deleted). Confirm with ', ' canales (no se borra nada tuyo). Confirma con ') + '`' + p + 'plantilla ' + id + ' confirm`');
+    }
+    const job = tpl.start(ctx.guild, id, { userId: ctx.user.id, clean: String(ctx.arg(2) || '').toLowerCase() === 'clean' });
+    void job;
+    await ctx.reply('🧩 ' + T(ctx, 'Applying the template… I will report when it is done.', 'Aplicando la plantilla… te aviso cuando termine.'));
+    const ch = ctx.channel;
+    const t0 = Date.now();
+    const iv = setInterval(async () => {
+      const st = tpl.status(ctx.guild.id);
+      if (st.running && Date.now() - t0 < 600000) return;
+      clearInterval(iv);
+      ch.send({ content: '```\n' + st.lines.slice(-18).join('\n').slice(0, 1800) + '\n```' }).catch(() => {});
+    }, 3000);
+  },
+});
+
+def({
   name: 'ping',
   level: 'public',
   d: 'Bot latency',
