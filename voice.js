@@ -13,6 +13,7 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits: P, MessageFlags } = require('discord.js');
 const { Readable } = require('stream');
 const bot = require('./bot');
+const agent = require('./agent');
 
 const { getCfg, saveCfg, L, COLOR, canConfigure, lockedMsg, logErr } = bot;
 const EPH = MessageFlags.Ephemeral;
@@ -192,6 +193,44 @@ async function think(s, who, text, cfg, written) {
   return out;
 }
 
+// Llamada genérica al "cerebro" (la usa el agente de órdenes). json=true pide una respuesta en JSON.
+async function complete(system, messages, o = {}) {
+  const k = keys().brain;
+  if (!k) throw new Error('no-brain');
+  const max = o.max || 500;
+  const sys = system + (o.json ? '\nRespond with a single valid JSON object and nothing else.' : '');
+  if (k.type === 'anthropic') {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': k.key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: k.model, max_tokens: max, temperature: 0.2, system: sys, messages }),
+    });
+    if (!r.ok) { console.log('[agente] cerebro falló: ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 200)); throw new Error('brain ' + r.status); }
+    const j = await r.json();
+    return (j.content || []).map((c) => c.text || '').join(' ');
+  }
+  const call = (model, json) => fetch(k.url, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + k.key, 'content-type': 'application/json' },
+    body: JSON.stringify(Object.assign(
+      { model, max_tokens: /gpt-oss|deepseek|qwen3|reason/i.test(model) ? Math.max(max, 1500) : max, temperature: 0.2, messages: [{ role: 'system', content: sys }, ...messages] },
+      json ? { response_format: { type: 'json_object' } } : {},
+      /gpt-oss/i.test(model) ? { reasoning_effort: 'low' } : {},
+    )),
+  });
+  let model = modelCache[k.url] || k.model;
+  let r = await call(model, !!o.json);
+  if (!r.ok && o.json && r.status === 400) r = await call(model, false);
+  if ((r.status === 404 || r.status === 400) && !process.env.VOICE_MODEL) {
+    model = modelCache[k.url] = await pickModel(k);
+    r = await call(model, !!o.json);
+    if (!r.ok && o.json) r = await call(model, false);
+  }
+  if (!r.ok) { console.log('[agente] cerebro falló: ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 200)); throw new Error('brain ' + r.status); }
+  const j = await r.json();
+  return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+}
+
 function chunks(text) {
   const parts = text.match(/[^.!?¿¡\n]+[.!?]?/g) || [text];
   const out = [];
@@ -276,11 +315,22 @@ async function onUtterance(s, guild, userId, pcm) {
     s.owner = owner;
     const text = await transcribe(pcm, cfg.voice.lang);
     if (text.length < 2 || /^(\W|\s)*$/.test(text)) return;
+    const tch = s.textChannelId ? guild.channels.cache.get(s.textChannelId) : null;
+    // El creador le da una orden por voz ("créame un canal…", "banea a…"): el bot la ejecuta
+    let ag = null;
+    if (owner && member) {
+      ag = await agent.handle({ complete, guild, member, user: member.user, channel: tch, text, voice: true }).catch((e) => { if (e.message !== 'no-brain') logErr(e); return null; });
+    }
+    if (ag) {
+      s.roast = false;
+      if (tch && (ag.components || ag.reply)) tch.send({ content: '🎤 **' + who.replace(/[*_`@]/g, '') + ':** ' + text.slice(0, 200) + '\n' + ag.reply, components: ag.components || [], allowedMentions: { parse: [] } }).catch(() => {});
+      if (ag.spoken) await speak(s, ag.spoken, cfg.voice.lang, cfg.voice.gender);
+      return;
+    }
     const answer = await think(s, who, text, cfg);
     if (!answer) return;
-    if (cfg.voice.transcript && s.textChannelId) {
-      const ch = guild.channels.cache.get(s.textChannelId);
-      if (ch) ch.send({ content: '🎤 **' + who.replace(/[*_`@]/g, '') + ':** ' + text.slice(0, 300) + '\n🤖 ' + answer.slice(0, 400), allowedMentions: { parse: [] } }).catch(() => {});
+    if (cfg.voice.transcript && tch) {
+      tch.send({ content: '🎤 **' + who.replace(/[*_`@]/g, '') + ':** ' + text.slice(0, 300) + '\n🤖 ' + answer.slice(0, 400), allowedMentions: { parse: [] } }).catch(() => {});
     }
     await speak(s, answer, cfg.voice.lang, cfg.voice.gender);
     if (s.roast && !s.owner) await silence(guild, member, cfg);
@@ -419,6 +469,7 @@ const setidioma = {
 };
 
 async function handleComponent(i) {
+  if (i.customId && i.customId.startsWith('agent:')) return agent.handleButton(i);
   if (i.customId !== 'vb:leave') return false;
   if (!i.guild) return true;
   const s = sessions.get(i.guild.id);
@@ -504,6 +555,14 @@ function attach(client) {
       if (hist.length >= 8) return;
       hist.push(now); chatRate.set(msg.author.id, hist);
       msg.channel.sendTyping().catch(() => {});
+      // Órdenes del creador: "créame un canal de memes", "dale el rol X a @y", "ponme la plantilla de gaming"…
+      if (owner) {
+        const ag = await agent.handle({ complete, guild: msg.guild, member: msg.member, user: msg.author, channel: msg.channel, msg, text: text.slice(0, 1500) });
+        if (ag) {
+          if (ag.reply) await msg.reply({ content: ag.reply.slice(0, 1900), components: ag.components || [], allowedMentions: { parse: [], repliedUser: false } }).catch(() => msg.channel.send({ content: ag.reply.slice(0, 1900), components: ag.components || [], allowedMentions: { parse: [] } }).catch(() => {}));
+          return;
+        }
+      }
       let st = chatHist.get(msg.channelId);
       if (!st) { st = { history: [] }; chatHist.set(msg.channelId, st); }
       st.owner = owner;
