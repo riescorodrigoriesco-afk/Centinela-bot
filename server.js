@@ -189,7 +189,7 @@ async function registerCommands(c) {
   }
 }
 
-const SITE_URL = process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : 'https://bot-activador-production.up.railway.app');
+const SITE_URL = process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.RENDER_EXTERNAL_URL || 'https://bot-activador-production.up.railway.app');
 async function setDescription(c) {
   try {
     const rest = new REST({ version: '10' }).setToken(config.token);
@@ -459,7 +459,7 @@ setInterval(() => {
   for (const [k, v] of oauthStates) if (v.exp < now) oauthStates.delete(k);
 }, 600000).unref();
 
-const baseUrl = (req) => process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : req.protocol + '://' + req.get('host'));
+const baseUrl = (req) => process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.RENDER_EXTERNAL_URL || req.protocol + '://' + req.get('host'));
 const cookieOf = (req, name) => {
   const m = (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(name + '='));
   return m ? decodeURIComponent(m.slice(name.length + 1)) : null;
@@ -609,6 +609,10 @@ app.listen(PORT, () => {
   if (config.enabled && config.token) {
     log('Configuración encontrada: iniciando el bot automáticamente');
     startBot();
+  }
+  // Render (plan gratis) duerme el servicio sin visitas: se hace una visita propia cada 10 minutos
+  if (process.env.RENDER_EXTERNAL_URL && process.env.KEEPALIVE !== 'off') {
+    setInterval(() => { fetch(process.env.RENDER_EXTERNAL_URL + '/health').catch(() => {}); }, 600000).unref();
   }
 });
 
