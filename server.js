@@ -124,15 +124,21 @@ let retryTimer = null;
 let downSince = null;
 
 async function validate(token, id) {
-  const r = await fetch('https://discord.com/api/v10/users/@me', {
-    headers: { Authorization: 'Bot ' + token },
-  });
+  let r;
+  try {
+    r = await fetch('https://discord.com/api/v10/users/@me', {
+      headers: { Authorization: 'Bot ' + token },
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (err) {
+    throw new Error('No hay respuesta de Discord (' + (err && err.name === 'TimeoutError' ? 'tiempo agotado' : (err && err.cause && err.cause.code) || (err && err.message)) + ')');
+  }
   if (r.status === 401) {
     const e = new Error('Token inválido. Cópialo de nuevo desde el Developer Portal (Bot > Reset Token).');
     e.fatal = true;
     throw e;
   }
-  if (!r.ok) throw new Error('Discord respondió con error ' + r.status);
+  if (!r.ok) throw new Error('Discord respondió con error ' + r.status + ' ' + (await r.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 120));
   const me = await r.json();
   if (id && me.id !== String(id)) {
     const e = new Error('El ID no coincide con el bot de ese token (el token pertenece al bot ' + me.id + ').');
@@ -293,8 +299,15 @@ async function startBot() {
     c.on('error', (e) => { lastError = e.message; log('Error del cliente: ' + e.message); });
     c.on('invalidated', () => { readyAt = null; scheduleRestart('Sesión invalidada'); });
 
-    await c.login(config.token);
+    // Diagnóstico del gateway (sin el ruido de los latidos)
+    c.on('debug', (m) => { if (!/heartbeat/i.test(m)) console.log('[gw] ' + String(m).replace(/\s+/g, ' ').slice(0, 220)); });
+    c.on('warn', (m) => console.log('[gw-warn] ' + String(m).slice(0, 200)));
+    const watch = setTimeout(() => { if (!c.isReady()) log('Sigue sin conectar tras 60 s (estado del gateway: ' + (c.ws && c.ws.status) + ')'); }, 60000);
+    watch.unref();
     log('Conectando a Discord como ' + me.username + '…');
+    await c.login(config.token);
+    clearTimeout(watch);
+    log('Sesión iniciada en Discord');
   } catch (e) {
     lastError = e.message;
     log('Fallo al iniciar: ' + e.message);
