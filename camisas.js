@@ -82,7 +82,14 @@ async function startRound(ctx) {
       )
       .setImage('attachment://' + k.name)
       .setFooter({ text: L(lc, 'Tip: the design changes with every era', 'Pista: el diseño cambia con cada época') });
-    await ctx.reply({ embeds: [e], files: [{ attachment: k.png, name: k.name }] });
+    try {
+      if (ctx.kind === 'slash') await ctx.reply({ embeds: [e], files: [{ attachment: k.png, name: k.name }] });
+      else await ch.send({ embeds: [e], files: [{ attachment: k.png, name: k.name }] });
+    } catch (err) {
+      rounds.delete(ch.id);
+      logErr('[camisas] no se pudo enviar la camiseta: ' + err.message);
+      return ctx.reply(L(lc, '⚠️ I could not send the shirt: ', '⚠️ No pude enviar la camiseta: ') + '`' + String(err.message).slice(0, 180) + '`\n' + L(lc, 'Check my permissions in this channel (**Attach files**, **Embed links**, **Send messages**) and run `/camisa estado`.', 'Revisa mis permisos en este canal (**Adjuntar archivos**, **Insertar enlaces**, **Enviar mensajes**) y usa `/camisa estado`.'));
+    }
 
     const r = { gid: ctx.guild.id, answer: k.year, team: k.team, t0: Date.now(), guesses: new Map(), lc, channel: ch, timers: [] };
     rounds.set(ch.id, r);
@@ -268,6 +275,23 @@ function setEvery(ctx) {
   return ctx.reply('✅ ' + L(lc, 'A shirt every **' + n + '** messages.', 'Una camiseta cada **' + n + '** mensajes.'));
 }
 
+async function estado(ctx) {
+  const lc = ctx.locale;
+  const ch = ctx.channel;
+  const me = ctx.guild.members.me;
+  const perms = me && ch.permissionsFor ? ch.permissionsFor(me) : null;
+  const need = [['ViewChannel', 'Ver canal'], ['SendMessages', 'Enviar mensajes'], ['EmbedLinks', 'Insertar enlaces'], ['AttachFiles', 'Adjuntar archivos'], ['AddReactions', 'Añadir reacciones'], ['ReadMessageHistory', 'Leer historial']];
+  const lines = need.map(([k, es]) => (perms ? (perms.has(P[k]) ? '✅ ' : '❌ ') : '❓ ') + es);
+  const cfg = getCfg(ctx.guild.id);
+  const sh = cfg.shirts || {};
+  const mine = (store.data[ctx.guild.id] || []).length;
+  let draw = '—';
+  try { const t0 = Date.now(); const r = await kit.randomKit(); draw = '✅ ' + (Date.now() - t0) + ' ms · ' + Math.round(r.png.length / 1024) + ' KB'; } catch (e) { draw = '❌ ' + e.message; }
+  const e = new EmbedBuilder().setColor(COLOR.blue || 0x3498db).setTitle('🩺 ' + L(lc, 'Shirt game status', 'Estado del juego de camisetas'))
+    .setDescription('**' + L(lc, 'Permissions in this channel', 'Permisos en este canal') + '**\n' + lines.join('\n') + '\n\n**' + L(lc, 'Drawing a shirt', 'Dibujar una camiseta') + ':** ' + draw + '\n**' + L(lc, 'Auto channel', 'Canal automático') + ':** ' + (sh.channel ? '<#' + sh.channel + '> · ' + L(lc, 'every ', 'cada ') + (sh.every || 10) : L(lc, 'off', 'apagado')) + '\n**' + L(lc, 'Mode', 'Modo') + ':** ' + (sh.mode || 'mixed') + ' · ' + L(lc, 'your shirts: ', 'tus camisetas: ') + mine);
+  return ctx.reply({ embeds: [e] });
+}
+
 function setMode(ctx) {
   const lc = ctx.locale;
   if (!canConfigure(ctx.guild, ctx.user.id, ctx.member)) return ctx.reply(L(lc, '❌ You need the **Manage Server** permission.', '❌ Necesitas el permiso **Gestionar servidor**.'));
@@ -353,6 +377,7 @@ function makeSlash() {
       .addAttachmentOption((o) => o.setName('imagen').setDescription('Shirt image').setRequired(true))
       .addStringOption((o) => o.setName('equipo').setDescription('Team name').setRequired(true).setMaxLength(60))
       .addIntegerOption((o) => o.setName('año').setDescription('Year').setRequired(true).setMinValue(1900).setMaxValue(2035)))
+    .addSubcommand((s) => s.setName('estado').setDescription('Check permissions and that the game works').setDescriptionLocalizations({ 'es-ES': 'Comprueba permisos y que el juego funciona', 'es-419': 'Comprueba permisos y que el juego funciona' }))
     .addSubcommand((s) => s.setName('lista').setDescription('List your added shirts').setDescriptionLocalizations({ 'es-ES': 'Lista tus camisetas añadidas', 'es-419': 'Lista tus camisetas añadidas' }))
     .addSubcommand((s) => s.setName('borrar').setDescription('Remove one of your added shirts').setDescriptionLocalizations({ 'es-ES': 'Borra una camiseta añadida', 'es-419': 'Borra una camiseta añadida' })
       .addStringOption((o) => o.setName('id').setDescription('Shirt id (see /camisa lista)').setRequired(true))),
@@ -369,6 +394,7 @@ function makeSlash() {
     const ctx = slashCtx(i, args);
     if (sub === 'jugar') return startRound(ctx);
     if (sub === 'top') return top(ctx);
+    if (sub === 'estado') { await ctx.defer(); return estado(ctx); }
     if (sub === 'canal' || sub === 'apagar') return setChannel(ctx, 1);
     if (sub === 'cada') return setEvery(ctx);
     if (sub === 'modo') return setMode(ctx);
@@ -401,6 +427,7 @@ function register(def) {
       if (['lista', 'list'].includes(sub)) return listKits(ctx);
       if (['borrar', 'del', 'delete', 'remove'].includes(sub)) return delKit(ctx);
       if (['top', 'ranking'].includes(sub)) return top(ctx);
+      if (['estado', 'status', 'diag'].includes(sub)) return estado(ctx);
       if (['modo', 'mode'].includes(sub)) return setMode(ctx);
       if (['canal', 'channel', 'setchannel'].includes(sub)) return setChannel(ctx, 1);
       if (['cada', 'every'].includes(sub)) return setEvery(ctx);

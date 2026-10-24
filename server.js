@@ -167,12 +167,25 @@ function applyPresence() {
 }
 
 async function registerCommands(c) {
+  const rest = new REST({ version: '10' }).setToken(config.token);
+  const detail = (e) => e.message + (e.rawError ? ' ' + JSON.stringify(e.rawError.errors || e.rawError).slice(0, 600) : '');
   try {
-    const rest = new REST({ version: '10' }).setToken(config.token);
     await rest.put(Routes.applicationCommands(c.user.id), { body: ALL_COMMANDS.map((x) => x.data.toJSON()) });
-    log('Comandos slash registrados (' + ALL_COMMANDS.length + ')');
+    log('Comandos slash registrados (' + ALL_COMMANDS.length + '): ' + ALL_COMMANDS.map((x) => '/' + x.data.name).join(' '));
+    return;
   } catch (e) {
-    log('No se pudieron registrar los comandos slash: ' + e.message);
+    log('No se pudieron registrar los comandos slash: ' + detail(e));
+  }
+  // Un comando con formato inválido no debe tumbar a los demás: se registran primero los básicos y luego uno a uno los extra
+  try {
+    const base = ALL_COMMANDS.filter((x) => !camisasMod.commands.includes(x));
+    await rest.put(Routes.applicationCommands(c.user.id), { body: base.map((x) => x.data.toJSON()) });
+    log('Comandos básicos registrados (' + base.length + ')');
+    for (const x of camisasMod.commands) {
+      try { await rest.post(Routes.applicationCommands(c.user.id), { body: x.data.toJSON() }); log('Registrado /' + x.data.name); } catch (e) { log('⚠️ Discord rechaza /' + x.data.name + ': ' + detail(e)); }
+    }
+  } catch (e) {
+    log('Tampoco se pudieron registrar los comandos básicos: ' + detail(e));
   }
 }
 
