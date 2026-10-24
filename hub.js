@@ -295,7 +295,7 @@ function catalog() {
   const out = [];
   for (const [cat, names] of Object.entries(CAT_OF)) for (const n of names) if (all.has(n)) out.push({ ...all.get(n), cat });
   for (const g of gameCmds) out.push({ name: g.name, en: g.en, es: g.es, level: 'public', aliases: g.alias ? [g.alias] : [], cat: 'game' });
-  for (const n of ['camisa', 'camisatop']) if (all.has(n)) out.push({ ...all.get(n), cat: 'game' });
+  for (const n of ['camisa', 'camisatop', 'setcamisas']) if (all.has(n)) out.push({ ...all.get(n), cat: 'game' });
   return out;
 }
 function publicCatalog() {

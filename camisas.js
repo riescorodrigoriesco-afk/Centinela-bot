@@ -4,6 +4,7 @@
  * camisas.js — Juego «CATCH UP!»: el bot manda la camiseta de un equipo y hay que adivinar de qué AÑO es.
  *   $camisa            empieza una ronda (también: $camiseta, $shirt)
  *   $camisatop         ranking de aciertos
+ *   $setcamisas [#canal|off]   (o $camisa canal) la camiseta aparece sola cada 10 mensajes en ese canal; $camisa cada <n> cambia el número
  *   $camisa añadir   (adjunta imágenes llamadas «Equipo 2002.png») añade tus propias camisetas reales
  *   $camisa modo real|mixto|dibujadas   elige de dónde salen las camisetas
  *   $camisa lista / $camisa borrar <id>
@@ -13,7 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, PermissionFlagsBits: P } = require('discord.js');
 const bot = require('./bot');
 const games = require('./games');
 const kit = require('./kit');
@@ -56,6 +57,13 @@ async function startRound(ctx) {
   const ch = ctx.channel;
   const lc = ctx.locale;
   if (rounds.has(ch.id)) return ctx.reply(L(lc, '👕 There is already a shirt in play in this channel!', '👕 ¡Ya hay una camiseta en juego en este canal!'));
+  const me = ctx.guild.members.me;
+  const need = [['ViewChannel', 'Ver canal'], ['SendMessages', 'Enviar mensajes'], ['EmbedLinks', 'Insertar enlaces'], ['AttachFiles', 'Adjuntar archivos']];
+  const perms = me && ch.permissionsFor ? ch.permissionsFor(me) : null;
+  const missing = perms ? need.filter(([k]) => !perms.has(P[k])) : [];
+  if (missing.length) {
+    return ch.send(L(lc, '❌ I need these permissions in this channel to send the shirt: ', '❌ Necesito estos permisos en este canal para enviar la camiseta: ') + missing.map(([, es]) => '**' + es + '**').join(', ')).catch(() => {});
+  }
   rounds.set(ch.id, { pending: true }); // reserva el canal mientras se dibuja
   try {
     await ctx.defer();
@@ -107,10 +115,27 @@ function endRound(chId, winner) {
   r.channel.send({ embeds: [e] }).catch(() => {});
 }
 
-async function onGuess(msg) {
+const counters = new Map(); // canal -> mensajes desde la última camiseta
+async function onMessage(msg) {
   if (!msg.guild || !msg.author || msg.author.bot) return;
   const r = rounds.get(msg.channelId);
-  if (!r || r.pending) return;
+  if (!r) {
+    // Camiseta automática: cada N mensajes en el canal elegido con «$camisa canal»
+    const cfg = getCfg(msg.guild.id);
+    const sh = cfg.shirts || {};
+    if (!sh.channel || sh.channel !== msg.channelId) return;
+    if (/^[$!.]/.test(msg.content || '')) return; // los comandos no cuentan
+    const n = (counters.get(msg.channelId) || 0) + 1;
+    if (n < (sh.every || 10)) { counters.set(msg.channelId, n); return; }
+    counters.set(msg.channelId, 0);
+    const ctx = {
+      channel: msg.channel, guild: msg.guild, locale: msg.guild.preferredLocale,
+      defer: () => msg.channel.sendTyping().catch(() => {}),
+      reply: (p) => msg.channel.send(p),
+    };
+    return startRound(ctx);
+  }
+  if (r.pending) return;
   const y = guessOf(msg.content);
   if (y === null) return;
   const n = (r.guesses.get(msg.author.id) || 0) + 1;
@@ -212,6 +237,37 @@ async function addKit(ctx) {
   return ctx.reply((ok.length ? '✅ ' + L(lc, 'Added ', 'Añadidas ') + ok.length + ': ' + ok.join(', ').slice(0, 1200) : '') + (bad.length ? '\n⚠️ ' + L(lc, 'Skipped: ', 'Omitidas: ') + bad.join(', ').slice(0, 600) : '') + (ok.length ? '\n' + L(lc, 'Tip: `$camisa mode real` makes the game use only your shirts.', 'Consejo: `$camisa modo real` hace que el juego use solo tus camisetas.') : ''));
 }
 
+function setChannel(ctx, at) {
+  const lc = ctx.locale;
+  if (!canConfigure(ctx.guild, ctx.user.id, ctx.member)) return ctx.reply(L(lc, '❌ You need the **Manage Server** permission.', '❌ Necesitas el permiso **Gestionar servidor**.'));
+  const cfg = getCfg(ctx.guild.id);
+  cfg.shirts = { mode: 'mixed', channel: null, every: 10, ...(cfg.shirts || {}) };
+  const raw = String(ctx.arg(at) || '').toLowerCase();
+  if (['off', 'apagar', 'quitar', 'no'].includes(raw)) {
+    cfg.shirts.channel = null;
+    saveCfg();
+    return ctx.reply('🔕 ' + L(lc, 'Automatic shirts are off.', 'Las camisetas automáticas están apagadas.'));
+  }
+  const id = !raw || ['aqui', 'aquí', 'here'].includes(raw) ? ctx.channel.id : ctx.id(at);
+  const ch = id && ctx.guild.channels.cache.get(id);
+  if (!ch || !ch.isTextBased()) return ctx.reply(L(lc, 'Mention a text channel: `$camisa channel #channel` (or run it inside the channel).', 'Menciona un canal de texto: `$camisa canal #canal` (o escríbelo dentro del canal).'));
+  cfg.shirts.channel = ch.id;
+  saveCfg();
+  counters.set(ch.id, 0);
+  return ctx.reply('✅ ' + L(lc, 'A shirt will appear in <#' + ch.id + '> every **' + (cfg.shirts.every || 10) + '** messages.', 'Aparecerá una camiseta en <#' + ch.id + '> cada **' + (cfg.shirts.every || 10) + '** mensajes.') + '\n' + L(lc, 'Change the number with `$camisa every <3-100>`, turn it off with `$camisa channel off`.', 'Cambia el número con `$camisa cada <3-100>` y apágalo con `$camisa canal off`.'));
+}
+
+function setEvery(ctx) {
+  const lc = ctx.locale;
+  if (!canConfigure(ctx.guild, ctx.user.id, ctx.member)) return ctx.reply(L(lc, '❌ You need the **Manage Server** permission.', '❌ Necesitas el permiso **Gestionar servidor**.'));
+  const n = parseInt(ctx.arg(1), 10);
+  if (!(n >= 3 && n <= 100)) return ctx.reply(L(lc, 'Use a number from 3 to 100: `$camisa every 10`', 'Usa un número de 3 a 100: `$camisa cada 10`'));
+  const cfg = getCfg(ctx.guild.id);
+  cfg.shirts = { mode: 'mixed', channel: null, every: 10, ...(cfg.shirts || {}), every: n };
+  saveCfg();
+  return ctx.reply('✅ ' + L(lc, 'A shirt every **' + n + '** messages.', 'Una camiseta cada **' + n + '** mensajes.'));
+}
+
 function setMode(ctx) {
   const lc = ctx.locale;
   if (!canConfigure(ctx.guild, ctx.user.id, ctx.member)) return ctx.reply(L(lc, '❌ You need the **Manage Server** permission.', '❌ Necesitas el permiso **Gestionar servidor**.'));
@@ -258,8 +314,19 @@ function register(def) {
       if (['borrar', 'del', 'delete', 'remove'].includes(sub)) return delKit(ctx);
       if (['top', 'ranking'].includes(sub)) return top(ctx);
       if (['modo', 'mode'].includes(sub)) return setMode(ctx);
+      if (['canal', 'channel', 'setchannel'].includes(sub)) return setChannel(ctx, 1);
+      if (['cada', 'every'].includes(sub)) return setEvery(ctx);
       return startRound(ctx);
     },
+  });
+  def({
+    name: 'setcamisas',
+    aliases: ['setcamisa', 'camisacanal', 'setchannelcamisas'],
+    level: 'cfg',
+    perm: P.ManageGuild,
+    d: 'Set the channel where a shirt appears every 10 messages',
+    es: 'Elige el canal donde aparece una camiseta cada 10 mensajes',
+    async run(ctx) { return setChannel(ctx, 0); },
   });
   def({
     name: 'camisatop',
@@ -272,7 +339,7 @@ function register(def) {
 }
 
 function attach(client) {
-  client.on('messageCreate', (m) => onGuess(m).catch(logErr));
+  client.on('messageCreate', (m) => onMessage(m).catch(logErr));
 }
 
 module.exports = { register, attach };
