@@ -4,7 +4,8 @@
  * camisas.js — Juego «CATCH UP!»: el bot manda la camiseta de un equipo y hay que adivinar de qué AÑO es.
  *   $camisa            empieza una ronda (también: $camiseta, $shirt)
  *   $camisatop         ranking de aciertos
- *   $camisa añadir Equipo | año   (con una imagen adjunta) añade tus propias camisetas al juego
+ *   $camisa añadir   (adjunta imágenes llamadas «Equipo 2002.png») añade tus propias camisetas reales
+ *   $camisa modo real|mixto|dibujadas   elige de dónde salen las camisetas
  *   $camisa lista / $camisa borrar <id>
  * El primero que escribe el año correcto en el canal gana monedas (🪙, las mismas de /daily y los minijuegos).
  * Camisetas incluidas: clubes y diseños originales (ficticios) dibujados por código.
@@ -17,7 +18,7 @@ const bot = require('./bot');
 const games = require('./games');
 const kit = require('./kit');
 
-const { L, COLOR, jsonStore, canConfigure, logErr } = bot;
+const { L, COLOR, jsonStore, canConfigure, logErr, getCfg, saveCfg } = bot;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const store = jsonStore('kits.json', () => ({}));
 
@@ -39,8 +40,11 @@ const guessOf = (txt) => {
 
 /* ============================ ronda ============================ */
 async function pickKit(gid) {
+  const mode = (getCfg(gid).shirts || {}).mode || 'mixed';
   const mine = (store.data[gid] || []).filter((k) => fs.existsSync(k.file));
-  if (mine.length && Math.random() < 0.5) {
+  const useMine = mode === 'real' ? mine.length > 0 : mode === 'drawn' ? false : mine.length > 0 && Math.random() < 0.5;
+  if (mode === 'real' && !mine.length) return null;
+  if (useMine) {
     const k = mine[Math.floor(Math.random() * mine.length)];
     return { team: k.team, year: k.year, png: fs.readFileSync(k.file), name: 'camisa' + path.extname(k.file), custom: true };
   }
@@ -56,6 +60,10 @@ async function startRound(ctx) {
   try {
     await ctx.defer();
     const k = await pickKit(ctx.guild.id);
+    if (!k) {
+      rounds.delete(ch.id);
+      return ctx.reply(L(lc, '👕 Real-shirts mode is on but you have none yet. Add them with `$camisa add` (attach the images; name each file like `Real Madrid 2002.png`).', '👕 Está el modo «solo reales» pero aún no hay camisetas tuyas. Añádelas con `$camisa añadir` (adjunta las imágenes y nombra cada archivo como `Real Madrid 2002.png`).'));
+    }
     const e = new EmbedBuilder()
       .setColor(COLOR.blue || 0x3498db)
       .setTitle('⚡ CATCH UP!')
@@ -153,31 +161,67 @@ function top(ctx) {
   return ctx.reply({ embeds: [e] });
 }
 
-async function addKit(ctx) {
-  const lc = ctx.locale;
-  if (!canConfigure(ctx.guild, ctx.user.id, ctx.member)) return ctx.reply(L(lc, '❌ You need the **Manage Server** permission.', '❌ Necesitas el permiso **Gestionar servidor**.'));
-  const msg = ctx.raw;
-  const att = msg && msg.attachments && msg.attachments.first();
-  const [teamRaw, yearRaw] = ctx.rest(1).split('|').map((s) => s.trim());
-  const year = parseInt(yearRaw, 10);
-  if (!att || !teamRaw || !(year >= 1900 && year <= 2035)) {
-    return ctx.reply(L(lc, 'Attach an image and write: `$camisa add Team name | year`', 'Adjunta una imagen y escribe: `$camisa añadir Nombre del equipo | año`'));
-  }
-  if (!/^image\/(png|jpe?g|webp)/i.test(att.contentType || '') || att.size > 8 * 1024 * 1024) return ctx.reply(L(lc, '❌ It must be a PNG, JPG or WEBP image under 8 MB.', '❌ Debe ser una imagen PNG, JPG o WEBP de menos de 8 MB.'));
-  const list = store.data[ctx.guild.id] || (store.data[ctx.guild.id] = []);
-  if (list.length >= 60) return ctx.reply(L(lc, '❌ Limit reached (60 shirts).', '❌ Límite alcanzado (60 camisetas).'));
+async function saveImage(gid, att, team, year) {
+  const list = store.data[gid] || (store.data[gid] = []);
   const r = await fetch(att.url);
-  if (!r.ok) return ctx.reply(L(lc, '❌ I could not download the image.', '❌ No pude descargar la imagen.'));
+  if (!r.ok) throw new Error('download');
   const buf = Buffer.from(await r.arrayBuffer());
   const id = newId();
   const ext = /png/i.test(att.contentType) ? '.png' : /webp/i.test(att.contentType) ? '.webp' : '.jpg';
   const dir = path.join(DATA_DIR, 'kits');
   fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, ctx.guild.id + '_' + id + ext);
+  const file = path.join(dir, gid + '_' + id + ext);
   fs.writeFileSync(file, buf);
-  list.push({ id, team: teamRaw.slice(0, 60), year, file });
+  list.push({ id, team: team.slice(0, 60), year, file });
   store.save();
-  return ctx.reply('✅ ' + L(lc, 'Added ', 'Añadida ') + '**' + teamRaw.slice(0, 60) + ' ' + year + '** (`' + id + '`). ' + L(lc, 'It will show up in rounds.', 'Saldrá en las rondas.'));
+  return id;
+}
+// «Real Madrid 2002.png» -> { team: 'Real Madrid', year: 2002 }
+function parseName(fileName) {
+  const base = String(fileName || '').replace(/\.[a-z0-9]+$/i, '').replace(/((?:19|20)\d{2})[-\/](?:\d{4}|\d{2})(?!\d)/, '$1').replace(/[_\-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const m = base.match(/(?:^|\D)((?:19|20)\d{2})(?!\d)/);
+  if (!m) return null;
+  const team = base.replace(m[1], '').replace(/[()\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  return team ? { team, year: parseInt(m[1], 10) } : null;
+}
+
+async function addKit(ctx) {
+  const lc = ctx.locale;
+  if (!canConfigure(ctx.guild, ctx.user.id, ctx.member)) return ctx.reply(L(lc, '❌ You need the **Manage Server** permission.', '❌ Necesitas el permiso **Gestionar servidor**.'));
+  const msg = ctx.raw;
+  const atts = msg && msg.attachments ? [...msg.attachments.values()] : [];
+  const usage = L(lc, 'Attach one or more images. Name each file like `Team name 2002.png` and write `$camisa add`, or one image with `$camisa add Team name | year`.', 'Adjunta una o varias imágenes. Nombra cada archivo como `Nombre del equipo 2002.png` y escribe `$camisa añadir`, o una sola imagen con `$camisa añadir Nombre del equipo | año`.');
+  if (!atts.length) return ctx.reply(usage);
+  const list = store.data[ctx.guild.id] || (store.data[ctx.guild.id] = []);
+  const text = ctx.rest(1);
+  const ok = [];
+  const bad = [];
+  await ctx.defer();
+  for (const att of atts) {
+    if (list.length >= 100) { bad.push(att.name + ' (' + L(lc, 'limit 100', 'límite 100') + ')'); continue; }
+    if (!/^image\/(png|jpe?g|webp)/i.test(att.contentType || '') || att.size > 8 * 1024 * 1024) { bad.push(att.name + ' (' + L(lc, 'not a PNG/JPG/WEBP under 8 MB', 'no es PNG/JPG/WEBP de menos de 8 MB') + ')'); continue; }
+    let info = null;
+    if (atts.length === 1 && text.includes('|')) {
+      const [t, y] = text.split('|').map((x) => x.trim());
+      const year = parseInt(y, 10);
+      if (t && year >= 1900 && year <= 2035) info = { team: t, year };
+    } else info = parseName(att.name);
+    if (!info || !(info.year >= 1900 && info.year <= 2035)) { bad.push(att.name + ' (' + L(lc, 'I need team and year in the file name', 'falta equipo y año en el nombre del archivo') + ')'); continue; }
+    try { const id = await saveImage(ctx.guild.id, att, info.team, info.year); ok.push(info.team + ' ' + info.year + ' (`' + id + '`)'); } catch (_) { bad.push(att.name + ' (' + L(lc, 'download failed', 'no se pudo descargar') + ')'); }
+  }
+  return ctx.reply((ok.length ? '✅ ' + L(lc, 'Added ', 'Añadidas ') + ok.length + ': ' + ok.join(', ').slice(0, 1200) : '') + (bad.length ? '\n⚠️ ' + L(lc, 'Skipped: ', 'Omitidas: ') + bad.join(', ').slice(0, 600) : '') + (ok.length ? '\n' + L(lc, 'Tip: `$camisa mode real` makes the game use only your shirts.', 'Consejo: `$camisa modo real` hace que el juego use solo tus camisetas.') : ''));
+}
+
+function setMode(ctx) {
+  const lc = ctx.locale;
+  if (!canConfigure(ctx.guild, ctx.user.id, ctx.member)) return ctx.reply(L(lc, '❌ You need the **Manage Server** permission.', '❌ Necesitas el permiso **Gestionar servidor**.'));
+  const raw = String(ctx.arg(1) || '').toLowerCase();
+  const map = { real: 'real', reales: 'real', mixto: 'mixed', mixed: 'mixed', mix: 'mixed', dibujadas: 'drawn', drawn: 'drawn', ficticias: 'drawn' };
+  const cfg = getCfg(ctx.guild.id);
+  if (!map[raw]) return ctx.reply(L(lc, 'Current mode: **', 'Modo actual: **') + (cfg.shirts || {}).mode + '**\n`real` — ' + L(lc, 'only your shirts', 'solo tus camisetas') + '\n`mixto` — ' + L(lc, 'yours and drawn ones', 'las tuyas y las dibujadas') + '\n`dibujadas` — ' + L(lc, 'only the drawn (fictional) ones', 'solo las dibujadas (ficticias)') + '\n' + L(lc, 'Change it: `$camisa mode <real|mixed|drawn>`', 'Cámbialo: `$camisa modo <real|mixto|dibujadas>`'));
+  cfg.shirts = { ...(cfg.shirts || {}), mode: map[raw] };
+  saveCfg();
+  return ctx.reply('✅ ' + L(lc, 'Mode set to **', 'Modo: **') + map[raw] + '**');
 }
 
 function listKits(ctx) {
@@ -213,6 +257,7 @@ function register(def) {
       if (['lista', 'list'].includes(sub)) return listKits(ctx);
       if (['borrar', 'del', 'delete', 'remove'].includes(sub)) return delKit(ctx);
       if (['top', 'ranking'].includes(sub)) return top(ctx);
+      if (['modo', 'mode'].includes(sub)) return setMode(ctx);
       return startRound(ctx);
     },
   });

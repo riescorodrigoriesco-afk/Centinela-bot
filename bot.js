@@ -70,6 +70,7 @@ const DEFAULTS = {
   rolePanel: { channel: null, roles: [], mode: 'buttons', emojis: [], tempHours: 0, reactionMsg: null, reactionMap: {} },
   levels: { enabled: false, announce: true, xpMin: 15, xpMax: 25, cooldownSec: 60, rewards: [], activityRole: null, activityMessages: 0 },
   voice: { enabled: true, lang: 'es', gender: 'female', persona: '', transcript: true, roast: true, ignored: [] },
+  shirts: { mode: 'mixed' },
   autoRole: { enabled: false, humans: [], bots: [], delaySec: 0, tempHours: 0 },
   maxSecurity: true,
   exemptChannels: [],
