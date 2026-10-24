@@ -11,11 +11,11 @@ const guardMod = require('./guard');
 const uiMod = require('./ui');
 const extrasMod = require('./extras');
 const voiceMod = require('./voice');
-const tplMod = require('./templates');
 const camisasMod = require('./camisas');
+const tplMod = require('./templates');
 
 // Comandos slash: /help, /guía, /putbot y /setidioma. El resto se maneja con menús, botones y el prefijo.
-const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands];
+const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands, ...camisasMod.commands];
 const COMMAND_MAP = new Map(ALL_COMMANDS.map((c) => [c.data.name, c]));
 
 const FULL_INTENTS = [
