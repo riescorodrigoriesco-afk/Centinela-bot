@@ -12,6 +12,7 @@ const uiMod = require('./ui');
 const extrasMod = require('./extras');
 const voiceMod = require('./voice');
 const tplMod = require('./templates');
+const camisasMod = require('./camisas');
 
 // Comandos slash: /help, /guía, /putbot y /setidioma. El resto se maneja con menús, botones y el prefijo.
 const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands];
@@ -248,6 +249,7 @@ async function startBot() {
     uiMod.attach(c);
     extrasMod.attach(c);
     voiceMod.attach(c);
+    camisasMod.attach(c);
     c.on('interactionCreate', async (i) => {
       try {
         if (i.isChatInputCommand()) {

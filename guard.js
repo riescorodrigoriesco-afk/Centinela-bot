@@ -1498,6 +1498,8 @@ const commands = CMDS.filter((c) => c.slash).map((c) => ({
   },
 }));
 
+require('./camisas').register(def);
+
 const BY_NAME = new Map();
 for (const c of CMDS) {
   BY_NAME.set(c.name, c);

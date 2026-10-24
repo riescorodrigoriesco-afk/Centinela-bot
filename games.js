@@ -499,4 +499,4 @@ async function handleButton(i) {
   return false;
 }
 
-module.exports = { commands, handleButton };
+module.exports = { commands, handleButton, acct, eco, coinsTxt };
