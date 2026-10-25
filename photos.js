@@ -19,21 +19,21 @@ const MAX_BYTES = 7 * 1024 * 1024;
 // [nombre, [alias para aceptar la respuesta], término de búsqueda]
 const CLUBS = [
   ['Manchester United', ['man utd', 'man united', 'manchester utd', 'mufc'], 'Manchester United'],
-  ['Liverpool', ['liverpool fc', 'lfc'], 'Liverpool FC'],
-  ['Arsenal', ['arsenal fc', 'gunners'], 'Arsenal FC'],
+  ['Liverpool', ['liverpool fc', 'lfc'], 'Liverpool FC', ['montevideo', 'uruguay', 'ecuador', 'quito']],
+  ['Arsenal', ['arsenal fc', 'gunners'], 'Arsenal FC', ['tula', 'sarandi', 'kyiv', 'kiev', 'crewe']],
   ['Chelsea', ['chelsea fc'], 'Chelsea FC'],
   ['Manchester City', ['man city', 'mcfc'], 'Manchester City'],
   ['Tottenham Hotspur', ['tottenham', 'spurs'], 'Tottenham Hotspur'],
-  ['Newcastle United', ['newcastle', 'newcastle utd'], 'Newcastle United'],
+  ['Newcastle United', ['newcastle', 'newcastle utd'], 'Newcastle United', ['jets', 'falcons', 'knights', 'rugby']],
   ['Leeds United', ['leeds', 'leeds utd'], 'Leeds United', ['rhinos', 'rugby', 'carnegie']],
-  ['Everton', ['everton fc'], 'Everton FC'],
+  ['Everton', ['everton fc'], 'Everton FC', ['vina', 'chile', 'del mar']],
   ['Aston Villa', ['villa'], 'Aston Villa', ['villarreal']],
   ['West Ham United', ['west ham', 'west ham utd'], 'West Ham United'],
   ['Real Madrid', ['madrid', 'real madrid cf', 'rm'], 'Real Madrid', ['atletico', 'atleti']],
-  ['FC Barcelona', ['barcelona', 'barca', 'fcb', 'fc barca'], 'FC Barcelona'],
+  ['FC Barcelona', ['barcelona', 'barca', 'fcb', 'fc barca'], 'FC Barcelona', ['guayaquil', 'ecuador', 'sporting club', 'bsc']],
   ['Atlético de Madrid', ['atletico', 'atletico madrid', 'atleti', 'atletico de madrid'], 'Atlético de Madrid', ['real']],
-  ['Valencia', ['valencia cf'], 'Valencia CF'],
-  ['Sevilla', ['sevilla fc'], 'Sevilla FC'],
+  ['Valencia', ['valencia cf'], 'Valencia CF', ['venezuela', 'torque', 'caracas']],
+  ['Sevilla', ['sevilla fc'], 'Sevilla FC', ['atletico', 'fc 2']],
   ['Athletic Club', ['athletic bilbao', 'athletic de bilbao', 'athletic'], 'Athletic Bilbao', ['oldham', 'charlton', 'wigan', 'dunfermline', 'hamilton', 'atletico', 'havre', 'academical']],
   ['Real Betis', ['betis'], 'Real Betis'],
   ['Real Sociedad', ['sociedad'], 'Real Sociedad'],
@@ -43,7 +43,7 @@ const CLUBS = [
   ['AC Milan', ['milan', 'ac milan'], 'AC Milan', ['inter']],
   ['Inter de Milán', ['inter', 'inter milan', 'internazionale', 'inter de milan', 'fc internazionale'], 'Inter Milan', ['acmilan', 'internacional', 'international', 'miami']],
   ['AS Roma', ['roma'], 'AS Roma'],
-  ['Napoli', ['ssc napoli', 'nápoles', 'napoles'], 'SSC Napoli'],
+  ['Napoli', ['ssc napoli', 'nápoles', 'napoles'], 'SSC Napoli', ['basket']],
   ['Lazio', ['ss lazio'], 'SS Lazio'],
   ['Fiorentina', ['acf fiorentina'], 'Fiorentina'],
   ['Parma', ['parma calcio'], 'Parma Calcio'],
@@ -61,10 +61,10 @@ const CLUBS = [
   ['Benfica', ['sl benfica'], 'SL Benfica'],
   ['FC Porto', ['porto'], 'FC Porto', ['alegre']],
   ['Sporting CP', ['sporting', 'sporting lisboa', 'sporting de portugal', 'sporting lisbon'], 'Sporting CP', ['kansas', 'gijon', 'braga', 'charleroi']],
-  ['Celtic', ['celtic fc'], 'Celtic FC'],
-  ['Rangers', ['rangers fc', 'glasgow rangers'], 'Rangers FC', ['texas', 'new york', 'nyrangers', 'queens park', 'qpr', 'baseball', 'hockey']],
+  ['Celtic', ['celtic fc'], 'Celtic FC', ['boston', 'celtics', 'basket']],
+  ['Rangers', ['rangers fc', 'glasgow rangers'], 'Rangers FC', ['texas', 'new york', 'nyrangers', 'queens park', 'qpr', 'baseball', 'hockey', 'deportes', 'talca', 'chile', 'tigres', 'paraguay']],
   ['Galatasaray', ['galatasaray sk'], 'Galatasaray'],
-  ['Boca Juniors', ['boca'], 'Boca Juniors'],
+  ['Boca Juniors', ['boca'], 'Boca Juniors', ['unidos', 'raton']],
   ['River Plate', ['river', 'river plate'], 'River Plate'],
   ['Flamengo', ['cr flamengo'], 'Flamengo'],
   ['Santos', ['santos fc'], 'Santos FC', ['laguna', 'dumont']],
@@ -88,14 +88,12 @@ const KIT = /\b(home|away|third|local|visitante|visitor|alternat\w*|alternativ\w
 const PERSON = /(\bof\b|free kick|bundesarchiv|\(\d{6,}\)|dsc[_ ]?\d|img[_ ]?\d|\bvs\b|goal\b|celebrat|training|match\b|final\b|scores?\b|tackle|header|penalty|\bwith\b|wearing|ambassador|president|minister|mayor|visit|meeting|signing|presents?\b|receives?\b|holding)/i;
 const BAD = /(logo|crest|badge|escudo|emblem|sticker|wappen|template|kit[ _]?(body|left|right|shorts|socks|sleeve|collar)|stadium|estadio|stadion|\bfans?\b|supporters|ultras|scarf|bufanda|flag\b|bandera|poster|ticket|banner|trophy|copa\b|statue|mural|\bvs\b|\bv\b|\bgame\b)/i;
 
+// Nombres sueltos que valen para ACERTAR pero no para reconocer el club de una foto («Liga Deportiva», «Villa Dálmine», «Sporting Cristal»…)
+const NO_DETECT = new Set(['deportivo', 'depor', 'sporting', 'america', 'villa', 'river', 'inter', 'athletic', 'paris', 'sociedad', 'bremen']);
 function matcher(club) {
-  const names = [club.name, ...club.aliases, club.q].map(flat).filter(Boolean);
-  const long = [...new Set(names.filter((n) => n.replace(/ /g, '').length >= 5))];
-  const shortRes = [...new Set(names.filter((n) => n.replace(/ /g, '').length < 5))].map((n) => new RegExp('(^| )' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '( |$)'));
-  return (title) => {
-    const t = flat(title);
-    return long.some((n) => t.includes(n)) || shortRes.some((re) => re.test(t));
-  };
+  const names = [...new Set([club.name, ...club.aliases, club.q].map(flat).filter((n) => n.replace(/ /g, '').length >= 3 && !NO_DETECT.has(n)))];
+  const res = names.map((n) => new RegExp('(^| )' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '( |$)'));
+  return (title) => { const t = flat(title); return res.some((re) => re.test(t)); };
 }
 for (const c of CLUBS) c.has = matcher(c);
 
@@ -491,4 +489,4 @@ async function selfTest() {
   for (const p of pool.slice(0, 5)) console.log('[camisas]   · ' + p.club.name + ' ' + p.label + ' ← «' + clean(p.title).slice(0, 80) + '» (' + p.source + ')');
 }
 
-module.exports = { CLUBS, pick, warm, stats, selfTest, parseSeason, accept, norm, startCrawl };
+module.exports = { CLUBS, pick, warm, stats, selfTest, parseSeason, accept, norm, startCrawl, clubOf };
