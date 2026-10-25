@@ -192,6 +192,7 @@ const PROVIDERS = [['serper', fromSerper], ['commons', fromCommons], ['openverse
 const pool = []; // { key, club, year, year2, label, url, thumb, page, author, license, source, title }
 const fetched = new Map(); // club.name -> veces que se ha pedido (para variar de página)
 let warming = null;
+let dryUntil = 0; // si la última búsqueda no trajo nada, no se vuelve a buscar hasta entonces
 
 async function fetchClub(club) {
   const n = fetched.get(club.name) || 0;
@@ -228,12 +229,14 @@ function warm(count, budgetMs) {
   if (warming) return warming;
   warming = (async () => {
     const t0 = Date.now();
+    const before = pool.length;
     const order = [...CLUBS].sort((a, b) => (fetched.get(a.name) || 0) - (fetched.get(b.name) || 0) || Math.random() - 0.5);
     for (const club of order.slice(0, count)) {
       if (budgetMs && Date.now() - t0 > budgetMs) break;
       await fetchClub(club);
       await new Promise((r) => setTimeout(r, 250));
     }
+    dryUntil = pool.length === before ? Date.now() + 600000 : 0;
   })().finally(() => { warming = null; });
   return warming;
 }
@@ -258,8 +261,9 @@ const used = new Map(); // servidor -> claves ya usadas
 
 // Devuelve una camiseta real lista para enviar, o null si no hay ahora mismo
 async function pick(gid) {
+  if (!pool.length && Date.now() < dryUntil) return null; // las fuentes no tienen nada ahora mismo: no hacer esperar
   if (pool.length < 6) await warm(4, 9000).catch(() => {});
-  else if (pool.length < 40) warm(2, 6000).catch(() => {});
+  else if (pool.length < 40 && Date.now() >= dryUntil) warm(2, 6000).catch(() => {});
   const seen = used.get(gid) || new Set();
   used.set(gid, seen);
   for (let tries = 0; tries < 6; tries++) {
