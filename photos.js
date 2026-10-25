@@ -82,6 +82,10 @@ const strip = (h) => String(h == null ? '' : h).replace(/<[^>]*>/g, ' ').replace
 const clean = (title) => String(title || '').replace(/^File:/i, '').replace(/\.[a-z0-9]{3,4}$/i, '').replace(/_/g, ' ');
 
 const SHIRT = /(shirt|jersey|camiseta|camisa|maillot|trikot|maglia|equipaci|kit\b|trøje|tr[oö]ja|koszulka|shirts|jerseys)/i;
+// Palabras que indican que la foto ES de una camiseta (local, visitante, alternativa…) y no de un jugador con ella puesta
+const KIT = /\b(home|away|third|local|visitante|visitor|alternat\w*|alternativ\w*|titular|suplente|primera|segunda|tercera|1st|2nd|3rd|gk|goalkeeper|portero|heim\w*|ausw\w*)\b|shirt|jersey|camiseta|camisa|maillot|trikot|maglia|equipaci|kit\b/i;
+// Títulos típicos de fotos de jugadores o partidos
+const PERSON = /(\bof\b|free kick|bundesarchiv|\(\d{6,}\)|dsc[_ ]?\d|img[_ ]?\d|\bvs\b|goal\b|celebrat|training|match\b|final\b|scores?\b|tackle|header|penalty)/i;
 const BAD = /(logo|crest|badge|escudo|emblem|sticker|wappen|template|kit[ _]?(body|left|right|shorts|socks|sleeve|collar)|stadium|estadio|stadion|\bfans?\b|supporters|ultras|scarf|bufanda|flag\b|bandera|poster|ticket|banner|trophy|copa\b|statue|mural|\bvs\b|\bv\b|\bgame\b)/i;
 
 function matcher(club) {
@@ -115,7 +119,8 @@ function accept(club, title, desc) {
   const t = clean(title);
   const d = String(desc || '');
   if (BAD.test(t)) return null;
-  if (!(SHIRT.test(t) || SHIRT.test(d))) return null; // tiene que ser una camiseta
+  if (!(KIT.test(t) || SHIRT.test(d))) return null; // tiene que ser una camiseta
+  if (PERSON.test(t) && !SHIRT.test(t)) return null; // foto de un jugador o de un partido
   if (!club.has(t) && !(d && club.has(d))) return null;
   const nt = norm(t);
   if ((club.x || []).some((x) => nt.includes(norm(x)))) return null; // es de otro club con nombre parecido
@@ -402,7 +407,8 @@ async function crawl(budgetMs) {
         const md = ii.extmetadata || {};
         const desc = strip(md.ImageDescription && md.ImageDescription.value).slice(0, 300);
         const t = clean(pg.title);
-        if (!(SHIRT.test(t) || SHIRT.test(desc) || SHIRT.test((files.get(c.title) || []).join(' ')))) continue;
+        if (!(KIT.test(t) || SHIRT.test(desc))) continue;
+        if (PERSON.test(t) && !SHIRT.test(t)) continue;
         const sn = parseSeason(t) || parseSeason(desc);
         if (!sn) { if (noYear.length < 6) noYear.push(t.slice(0, 50)); continue; }
         const key = 'commons:' + (ii.thumburl || ii.url);
@@ -423,9 +429,18 @@ async function crawl(budgetMs) {
   return added;
 }
 
+async function testDownloads() {
+  const sample = pool.slice().sort(() => Math.random() - 0.5).slice(0, 3);
+  for (const it of sample) {
+    const t0 = Date.now();
+    const img = await download(it);
+    console.log('[camisas] descarga de prueba ' + it.club.name + ' ' + it.label + ' → ' + (img ? Math.round(img.buf.length / 1024) + ' KB ' + img.ext : 'FALLÓ') + ' · ' + (Date.now() - t0) + ' ms · ' + it.url.slice(0, 90));
+  }
+}
+
 function startCrawl(budgetMs) {
   if (crawling) return crawling;
-  crawling = crawl(budgetMs || 75000).catch((e) => console.log('[camisas] rastreo falló: ' + e.message)).finally(() => { crawling = null; crawled = true; });
+  crawling = crawl(budgetMs || 75000).then(() => testDownloads()).catch((e) => console.log('[camisas] rastreo falló: ' + e.message)).finally(() => { crawling = null; crawled = true; });
   return crawling;
 }
 
