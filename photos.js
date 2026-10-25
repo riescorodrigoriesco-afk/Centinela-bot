@@ -129,8 +129,7 @@ async function getJson(url) {
 const off = { commons: 0, openverse: 0, google: 0 }; // proveedor apagado hasta (ms)
 const st = { commons: { n: 0, err: '' }, openverse: { n: 0, err: '' }, google: { n: 0, err: '' } };
 
-async function fromCommons(club, offset) {
-  const q = club.q + ' (shirt OR jersey OR camiseta OR maillot OR trikot OR maglia) filetype:bitmap';
+async function commonsSearch(q, offset) {
   const u = 'https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
     action: 'query', format: 'json', generator: 'search', gsrsearch: q, gsrnamespace: '6', gsrlimit: '50', gsroffset: String(offset || 0),
     prop: 'imageinfo', iiprop: 'url|mime|extmetadata', iiurlwidth: '900', iiextmetadatafilter: 'Artist|LicenseShortName', iiextmetadatalanguage: 'en',
@@ -169,6 +168,8 @@ async function fromGoogle(club, page) {
   }).filter((x) => x.url);
 }
 
+const fromCommons = (club, offset) => commonsSearch(club.q + ' (shirt OR jersey OR camiseta OR maillot OR trikot OR maglia) filetype:bitmap', offset);
+
 const PROVIDERS = [['commons', fromCommons], ['openverse', fromOpenverse], ['google', fromGoogle]];
 
 /* ---------- reserva de fotos ---------- */
@@ -184,6 +185,7 @@ async function fetchClub(club) {
     if (Date.now() < off[name]) continue;
     try {
       const items = await fn(club, n);
+      if (n === 0) console.log('[camisas] fotos: ' + name + ' «' + club.q + '» → ' + items.length + ' resultados, válidos ' + items.filter((it) => accept(club, it.title)).length + (items.length ? ' · ej: ' + items.slice(0, 3).map((it) => clean(it.title).slice(0, 60)).join(' | ') : ''));
       for (const it of items) {
         const s = accept(club, it.title);
         if (!s) continue;
@@ -196,7 +198,8 @@ async function fetchClub(club) {
       st[name].err = '';
     } catch (e) {
       st[name].err = e.message;
-      if (e.status === 401 || e.status === 403 || e.status === 429) off[name] = Date.now() + 3600000;
+      if (e.status === 401 || e.status === 403) off[name] = Infinity; // pide registro o clave: no se vuelve a intentar
+      else if (e.status === 429) off[name] = Date.now() + 3600000;
       else off[name] = Date.now() + 60000;
       console.log('[camisas] fotos: ' + name + ' falló (' + e.message + ')');
     }
@@ -266,9 +269,21 @@ async function pick(gid) {
 
 const stats = () => ({ pool: pool.length, clubs: new Set(pool.map((p) => p.club.name)).size, providers: { commons: st.commons, openverse: st.openverse, google: { ...st.google, enabled: !!(process.env.GOOGLE_API_KEY && process.env.GOOGLE_CX) } } });
 
+// Sonda de diagnóstico: qué devuelve Commons con distintas búsquedas
+async function probe() {
+  const qs = ['Real Madrid shirt', 'Real Madrid jersey', 'Real Madrid camiseta', 'FC Barcelona jersey filetype:bitmap', 'football shirt 2002', 'camiseta fútbol 1998', 'Manchester United shirt 1999'];
+  for (const q of qs) {
+    try {
+      const items = await commonsSearch(q, 0);
+      console.log('[camisas] sonda «' + q + '» → ' + items.length + ' · ' + items.slice(0, 5).map((it) => clean(it.title).slice(0, 55)).join(' | '));
+    } catch (e) { console.log('[camisas] sonda «' + q + '» falló: ' + e.message); }
+  }
+}
+
 // Al arrancar: prueba las fuentes y deja el resultado en los logs
 async function selfTest() {
   const t0 = Date.now();
+  await probe();
   try {
     await warm(5, 25000);
   } catch (e) { console.log('[camisas] autoprueba de fotos falló: ' + e.message); }
