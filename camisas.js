@@ -76,7 +76,7 @@ async function drawnKit() {
   return { team: r.team, aliases: [], year: r.year, year2: r.year, season: String(r.year), png: r.png, name: 'camiseta.png', credit: null };
 }
 async function pickKit(gid) {
-  const mode = (getCfg(gid).shirts || {}).mode || 'mixed';
+  const mode = (getCfg(gid).shirts || {}).mode || 'real';
   if (mode === 'drawn') return drawnKit();
   const mine = (store.data[gid] || []).filter((k) => fs.existsSync(k.file));
   const own = () => {
@@ -310,7 +310,7 @@ function setChannel(ctx, at) {
   const lc = ctx.locale;
   if (!canConfigure(ctx.guild, ctx.user.id, ctx.member)) return ctx.reply(L(lc, '❌ You need the **Manage Server** permission.', '❌ Necesitas el permiso **Gestionar servidor**.'));
   const cfg = getCfg(ctx.guild.id);
-  cfg.shirts = { mode: 'mixed', channel: null, every: 10, ...(cfg.shirts || {}) };
+  cfg.shirts = { mode: 'real', channel: null, every: 10, ...(cfg.shirts || {}) };
   const raw = String(ctx.arg(at) || '').toLowerCase();
   if (['off', 'apagar', 'quitar', 'no'].includes(raw)) {
     cfg.shirts.channel = null;
@@ -332,7 +332,7 @@ function setEvery(ctx) {
   const n = parseInt(ctx.arg(1), 10);
   if (!(n >= 3 && n <= 100)) return ctx.reply(L(lc, 'Use a number from 3 to 100: `$camisa every 10`', 'Usa un número de 3 a 100: `$camisa cada 10`'));
   const cfg = getCfg(ctx.guild.id);
-  cfg.shirts = { mode: 'mixed', channel: null, every: 10, ...(cfg.shirts || {}), every: n };
+  cfg.shirts = { mode: 'real', channel: null, every: 10, ...(cfg.shirts || {}), every: n };
   saveCfg();
   return ctx.reply('✅ ' + L(lc, 'A shirt every **' + n + '** messages.', 'Una camiseta cada **' + n + '** mensajes.'));
 }
@@ -354,7 +354,7 @@ async function estado(ctx) {
   const pv = ps.providers;
   const real = '📸 ' + ps.pool + ' ' + L(lc, 'real photos ready', 'fotos reales listas') + ' (' + ps.clubs + ' ' + L(lc, 'clubs', 'clubes') + ')\nSerper: ' + (pv.serper.enabled ? pv.serper.n + (pv.serper.err ? ' ⚠️ ' + pv.serper.err : '') : L(lc, 'no key', 'sin clave')) + ' · Commons: ' + pv.commons.n + (pv.commons.err ? ' ⚠️ ' + pv.commons.err : '') + ' · Openverse: ' + pv.openverse.n + (pv.openverse.err ? ' ⚠️ ' + pv.openverse.err : '') + ' · Google: ' + (pv.google.enabled ? pv.google.n + (pv.google.err ? ' ⚠️ ' + pv.google.err : '') : L(lc, 'no key', 'sin clave'));
   const e = new EmbedBuilder().setColor(COLOR.blue || 0x3498db).setTitle('🩺 ' + L(lc, 'Shirt game status', 'Estado del juego de camisetas'))
-    .setDescription('**' + L(lc, 'Permissions in this channel', 'Permisos en este canal') + '**\n' + lines.join('\n') + '\n\n**' + L(lc, 'Real photos', 'Fotos reales') + ':** ' + real + '\n**' + L(lc, 'Drawing a shirt', 'Dibujar una camiseta') + ':** ' + draw + '\n**' + L(lc, 'Auto channel', 'Canal automático') + ':** ' + (sh.channel ? '<#' + sh.channel + '> · ' + L(lc, 'every ', 'cada ') + (sh.every || 10) : L(lc, 'off', 'apagado')) + '\n**' + L(lc, 'Mode', 'Modo') + ':** ' + (sh.mode || 'mixed') + ' · ' + L(lc, 'your shirts: ', 'tus camisetas: ') + mine);
+    .setDescription('**' + L(lc, 'Permissions in this channel', 'Permisos en este canal') + '**\n' + lines.join('\n') + '\n\n**' + L(lc, 'Real photos', 'Fotos reales') + ':** ' + real + '\n**' + L(lc, 'Drawing a shirt', 'Dibujar una camiseta') + ':** ' + draw + '\n**' + L(lc, 'Auto channel', 'Canal automático') + ':** ' + (sh.channel ? '<#' + sh.channel + '> · ' + L(lc, 'every ', 'cada ') + (sh.every || 10) : L(lc, 'off', 'apagado')) + '\n**' + L(lc, 'Mode', 'Modo') + ':** ' + (sh.mode || 'real') + ' · ' + L(lc, 'your shirts: ', 'tus camisetas: ') + mine);
   return ctx.reply({ embeds: [e] });
 }
 

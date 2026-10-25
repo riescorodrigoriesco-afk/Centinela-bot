@@ -34,7 +34,7 @@ const CLUBS = [
   ['Atlético de Madrid', ['atletico', 'atletico madrid', 'atleti', 'atletico de madrid'], 'Atlético de Madrid', ['real']],
   ['Valencia', ['valencia cf'], 'Valencia CF'],
   ['Sevilla', ['sevilla fc'], 'Sevilla FC'],
-  ['Athletic Club', ['athletic bilbao', 'athletic de bilbao', 'athletic'], 'Athletic Bilbao', ['oldham', 'charlton', 'wigan', 'dunfermline', 'hamilton', 'atletico']],
+  ['Athletic Club', ['athletic bilbao', 'athletic de bilbao', 'athletic'], 'Athletic Bilbao', ['oldham', 'charlton', 'wigan', 'dunfermline', 'hamilton', 'atletico', 'havre', 'academical']],
   ['Real Betis', ['betis'], 'Real Betis'],
   ['Real Sociedad', ['sociedad'], 'Real Sociedad'],
   ['Deportivo de La Coruña', ['deportivo', 'depor', 'deportivo la coruna'], 'Deportivo de La Coruña'],
@@ -85,7 +85,7 @@ const SHIRT = /(shirt|jersey|camiseta|camisa|maillot|trikot|maglia|equipaci|kit\
 // Palabras que indican que la foto ES de una camiseta (local, visitante, alternativa…) y no de un jugador con ella puesta
 const KIT = /\b(home|away|third|local|visitante|visitor|alternat\w*|alternativ\w*|titular|suplente|primera|segunda|tercera|1st|2nd|3rd|gk|goalkeeper|portero|heim\w*|ausw\w*)\b|shirt|jersey|camiseta|camisa|maillot|trikot|maglia|equipaci|kit\b/i;
 // Títulos típicos de fotos de jugadores o partidos
-const PERSON = /(\bof\b|free kick|bundesarchiv|\(\d{6,}\)|dsc[_ ]?\d|img[_ ]?\d|\bvs\b|goal\b|celebrat|training|match\b|final\b|scores?\b|tackle|header|penalty)/i;
+const PERSON = /(\bof\b|free kick|bundesarchiv|\(\d{6,}\)|dsc[_ ]?\d|img[_ ]?\d|\bvs\b|goal\b|celebrat|training|match\b|final\b|scores?\b|tackle|header|penalty|\bwith\b|wearing|ambassador|president|minister|mayor|visit|meeting|signing|presents?\b|receives?\b|holding)/i;
 const BAD = /(logo|crest|badge|escudo|emblem|sticker|wappen|template|kit[ _]?(body|left|right|shorts|socks|sleeve|collar)|stadium|estadio|stadion|\bfans?\b|supporters|ultras|scarf|bufanda|flag\b|bandera|poster|ticket|banner|trophy|copa\b|statue|mural|\bvs\b|\bv\b|\bgame\b)/i;
 
 function matcher(club) {
@@ -326,6 +326,18 @@ async function catPage(cat, type, cont) {
   return { items: (j.query && j.query.categorymembers) || [], next: j.continue && j.continue.cmcontinue };
 }
 
+const DYN = new Map();
+// Club sacado de una categoría de Commons como «River Plate team jerseys (adidas)» dentro de «… by team»
+function dynClub(path) {
+  if (!path.some((x) => /\bby (team|club)\b/i.test(x))) return null;
+  const last = path[path.length - 1];
+  if (/\bby\b|national|schemes|template|supporters|fans|brand|colou?r|player|season|decade/i.test(last)) return null;
+  const name = last.replace(/\s*\(.*?\)\s*/g, ' ').replace(/\b(association football|football|soccer|team|club)\b/ig, ' ').replace(/\b(jerseys?|shirts?|kits?|uniforms?)\b.*$/i, '').replace(/\s+/g, ' ').trim();
+  if (name.length < 3 || /^\d+$/.test(name) || !/jersey|shirt|kit|uniform/i.test(last)) return null;
+  if (!DYN.has(name)) DYN.set(name, { name, aliases: [], q: name, x: [], has: () => true, dyn: true });
+  return DYN.get(name);
+}
+
 const clubOf = (text) => {
   const t = flat(text);
   return CLUBS.find((c) => c.has(t) && !c.x.some((x) => norm(t).includes(norm(x)))) || null;
@@ -338,7 +350,7 @@ async function crawl(budgetMs) {
   const files = new Map(); // título -> ruta de categorías
   const tree = [];
   let cats = 0;
-  while (queue.length && cats < 140 && Date.now() - t0 < budgetMs && files.size < 5000) {
+  while (queue.length && cats < 320 && Date.now() - t0 < budgetMs && files.size < 8000) {
     const { cat, path, d } = queue.shift();
     if (seenCat.has(cat)) continue;
     seenCat.add(cat);
@@ -359,7 +371,7 @@ async function crawl(budgetMs) {
         for (const sc of r.items) {
           const name = sc.title.replace(/^Category:/, '');
           const node = { cat: name, path: [...path, name], d: d + 1 };
-          if (clubOf(name)) queue.unshift(node); else queue.push(node);
+          if (clubOf(name) || /\bby (team|club)\b/i.test(name) || path.some((x) => /\bby (team|club)\b/i.test(x))) queue.unshift(node); else queue.push(node);
           ns++;
         }
       }
@@ -381,6 +393,7 @@ async function crawl(budgetMs) {
     if (BAD.test(t)) continue;
     let club = clubOf(t);
     if (!club) for (const pc of [...path].reverse()) { club = clubOf(pc); if (club) break; }
+    if (!club) club = dynClub(path);
     if (!club) { if (noClub.length < 8) noClub.push(t.slice(0, 50)); continue; }
     cand.push({ title, club, ys: parseSeason(t) ? 1 : 0 });
   }
@@ -392,7 +405,7 @@ async function crawl(budgetMs) {
   const noYear = [];
   const sample = [];
   const tData = Date.now();
-  for (let i = 0; i < cand.length && i < 1100 && Date.now() - tData < 200000; i += 40) {
+  for (let i = 0; i < cand.length && i < 2000 && Date.now() - tData < 240000; i += 40) {
     const batch = cand.slice(i, i + 40);
     try {
       const j = await getJson('https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
@@ -440,7 +453,7 @@ async function testDownloads() {
 
 function startCrawl(budgetMs) {
   if (crawling) return crawling;
-  crawling = crawl(budgetMs || 75000).then(() => testDownloads()).catch((e) => console.log('[camisas] rastreo falló: ' + e.message)).finally(() => { crawling = null; crawled = true; });
+  crawling = crawl(budgetMs || 150000).then(() => testDownloads()).catch((e) => console.log('[camisas] rastreo falló: ' + e.message)).finally(() => { crawling = null; crawled = true; });
   return crawling;
 }
 
@@ -469,7 +482,7 @@ async function catProbe() {
 // Al arrancar: prueba las fuentes y deja el resultado en los logs
 async function selfTest() {
   const t0 = Date.now();
-  startCrawl(75000); // en segundo plano
+  startCrawl(150000); // en segundo plano
   try {
     await warm(3, 15000);
   } catch (e) { console.log('[camisas] autoprueba de fotos falló: ' + e.message); }
