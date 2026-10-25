@@ -271,6 +271,7 @@ async function startBot() {
     camisasMod.attach(c);
     c.on('interactionCreate', async (i) => {
       try {
+        if (camisasMod.owns(i)) { await camisasMod.handleInteraction(i); return; }
         if (i.isChatInputCommand()) {
           const cmd = COMMAND_MAP.get(i.commandName);
           if (cmd) await cmd.execute(i);

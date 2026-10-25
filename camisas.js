@@ -1,184 +1,246 @@
 'use strict';
 
 /*
- * camisas.js — Juego «CATCH UP!»: el bot manda la camiseta de un equipo y hay que adivinar de qué AÑO es.
- *   $camisa            empieza una ronda (también: $camiseta, $shirt)
- *   $camisatop         ranking de aciertos
- *   $setcamisas [#canal|off]   (o $camisa canal) la camiseta aparece sola cada 10 mensajes en ese canal; $camisa cada <n> cambia el número
- *   $camisa añadir   (adjunta imágenes llamadas «Equipo 2002.png») añade tus propias camisetas reales
- *   $camisa modo real|mixto|dibujadas   elige de dónde salen las camisetas
- *   $camisa lista / $camisa borrar <id>
- * El primero que escribe el año correcto en el canal gana monedas (🪙, las mismas de /daily y los minijuegos).
- * Camisetas incluidas: clubes y diseños originales (ficticios) dibujados por código.
+ * camisas.js — Juego «CATCH UP!» (estilo BallsDex): aparece una camiseta REAL de un club y hay que atraparla.
+ *   El bot manda la foto con el botón «Catch me»; se pulsa, se escribe el club y el año, y se ganan monedas 🪙.
+ *   $camisa / /camisa jugar      empieza una ronda (también: $camiseta, $shirt)
+ *   $camisatop                   ranking de aciertos
+ *   $setcamisas [#canal|off]     (o /camisa canal) aparece sola cada 10 mensajes en ese canal; /camisa cada <n> cambia el número
+ *   /camisa agregar              añade tus propias fotos (también $camisa añadir, con imágenes llamadas «Equipo 2002.png»)
+ *   /camisa modo real|mixto|dibujadas   de dónde salen las camisetas
+ *   /camisa estado               comprueba permisos y las fuentes de fotos
+ * Fotos reales: las busca photos.js en Wikimedia Commons / Openverse (y Google si hay clave) con crédito al autor.
+ * Las «dibujadas» son clubes ficticios hechos por código (solo en modo mixto o dibujadas).
  */
 
 const fs = require('fs');
 const path = require('path');
-const { EmbedBuilder, SlashCommandBuilder, ChannelType, PermissionFlagsBits: P } = require('discord.js');
+const { EmbedBuilder, SlashCommandBuilder, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags, PermissionFlagsBits: P } = require('discord.js');
 const bot = require('./bot');
 const games = require('./games');
 const kit = require('./kit');
+const photos = require('./photos');
 
 const { L, COLOR, jsonStore, canConfigure, logErr, getCfg, saveCfg } = bot;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const store = jsonStore('kits.json', () => ({}));
+const EPH = MessageFlags.Ephemeral;
 
-const ROUND_MS = 45000;
-const HINT1_MS = 18000;
-const HINT2_MS = 32000;
-const BASE = 150;
+const ROUND_MS = 60000;
+const HINT1_MS = 22000;
+const HINT2_MS = 42000;
+const BASE = 100; // por acertar el club
 const MAX_GUESSES = 3;
 const rounds = new Map(); // canal -> ronda
+const byId = new Map(); // id de ronda -> ronda
 
 const newId = () => Math.random().toString(36).slice(2, 8);
 const decade = (y) => Math.floor(y / 10) * 10;
-const guessOf = (txt) => {
-  const t = String(txt || '').trim();
-  if (t.length > 26) return null;
-  const m = t.match(/^\D{0,14}((?:19|20)\d{2})\D{0,8}$/);
-  return m ? parseInt(m[1], 10) : null;
-};
+const clip = (s, n) => String(s == null ? '' : s).replace(/[*_`~|>@]/g, '').slice(0, n);
+const lbl = (k) => k.team + ' · ' + k.season;
+const creditLine = (k) => (k.credit ? '\n📷 ' + clip(k.credit.text, 120) + (k.credit.url ? ' — <' + k.credit.url + '>' : '') : '');
 
-/* ============================ ronda ============================ */
-async function pickKit(gid) {
-  const mode = (getCfg(gid).shirts || {}).mode || 'mixed';
-  const mine = (store.data[gid] || []).filter((k) => fs.existsSync(k.file));
-  const useMine = mode === 'real' ? mine.length > 0 : mode === 'drawn' ? false : mine.length > 0 && Math.random() < 0.5;
-  if (mode === 'real' && !mine.length) return null;
-  if (useMine) {
-    const k = mine[Math.floor(Math.random() * mine.length)];
-    return { team: k.team, year: k.year, png: fs.readFileSync(k.file), name: 'camisa' + path.extname(k.file), custom: true };
+/* ============================ acertar club y año ============================ */
+const GEN_START = /^(fc|cf|ac|as|sc|cd|ud|sd|ss|us|rc|afc|club|clube|the) /;
+const GEN_END = / (fc|cf|cd|sc)$/;
+function aliasSet(k) {
+  const out = new Set();
+  for (const a of [k.team, ...(k.aliases || [])]) {
+    const base = String(a || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    for (const v of [base, base.replace(GEN_START, ''), base.replace(GEN_END, ''), base.replace(GEN_START, '').replace(GEN_END, '')]) {
+      const n = v.replace(/ /g, '');
+      if (n.length >= 2) out.add(n);
+    }
   }
-  const r = await kit.randomKit();
-  return { team: r.team, year: r.year, png: r.png, name: 'camisa.png', custom: false };
+  return out;
+}
+function clubOk(guess, k) {
+  const g = photos.norm(guess);
+  if (g.length < 2) return false;
+  if ((k.not || []).some((n) => g.includes(n))) return false;
+  for (const a of aliasSet(k)) {
+    if (g === a) return true;
+    if (a.length >= 5 && g.includes(a)) return true;
+    if (g.length >= 7 && a.startsWith(g)) return true;
+  }
+  return false;
+}
+function yearPts(y, k) {
+  const d = Math.min(Math.abs(y - k.year), Math.abs(y - (k.year2 || k.year)));
+  return d === 0 ? 100 : d === 1 ? 60 : d === 2 ? 40 : d <= 5 ? 15 : 0;
 }
 
+/* ============================ elegir camiseta ============================ */
+async function drawnKit() {
+  const r = await kit.randomKit();
+  return { team: r.team, aliases: [], year: r.year, year2: r.year, season: String(r.year), png: r.png, name: 'camiseta.png', credit: null };
+}
+async function pickKit(gid) {
+  const mode = (getCfg(gid).shirts || {}).mode || 'real';
+  if (mode === 'drawn') return drawnKit();
+  const mine = (store.data[gid] || []).filter((k) => fs.existsSync(k.file));
+  const own = () => {
+    const k = mine[Math.floor(Math.random() * mine.length)];
+    return { team: k.team, aliases: [], year: k.year, year2: k.year, season: String(k.year), png: fs.readFileSync(k.file), name: 'camiseta' + path.extname(k.file), credit: null };
+  };
+  if (mine.length && Math.random() < 0.4) return own();
+  const w = await photos.pick(gid).catch((e) => { logErr('[camisas] fotos: ' + e.message); return null; });
+  if (w) return { ...w, not: (w.not || []) };
+  if (mine.length) return own();
+  return mode === 'mixed' ? drawnKit() : null;
+}
+
+/* ============================ ronda ============================ */
 async function startRound(ctx) {
   const ch = ctx.channel;
   const lc = ctx.locale;
   if (rounds.has(ch.id)) return ctx.reply(L(lc, '👕 There is already a shirt in play in this channel!', '👕 ¡Ya hay una camiseta en juego en este canal!'));
   const me = ctx.guild.members.me;
-  const need = [['ViewChannel', 'Ver canal'], ['SendMessages', 'Enviar mensajes'], ['EmbedLinks', 'Insertar enlaces'], ['AttachFiles', 'Adjuntar archivos']];
+  const need = [['ViewChannel', 'Ver canal'], ['SendMessages', 'Enviar mensajes'], ['AttachFiles', 'Adjuntar archivos']];
   const perms = me && ch.permissionsFor ? ch.permissionsFor(me) : null;
   const missing = perms ? need.filter(([k]) => !perms.has(P[k])) : [];
   if (missing.length) {
     return ctx.reply(L(lc, '❌ I need these permissions in this channel to send the shirt: ', '❌ Necesito estos permisos en este canal para enviar la camiseta: ') + missing.map(([, es]) => '**' + es + '**').join(', '));
   }
-  rounds.set(ch.id, { pending: true }); // reserva el canal mientras se dibuja
+  rounds.set(ch.id, { pending: true }); // reserva el canal mientras se busca la foto
   try {
     await ctx.defer();
     const k = await pickKit(ctx.guild.id);
     if (!k) {
       rounds.delete(ch.id);
-      return ctx.reply(L(lc, '👕 Real-shirts mode is on but you have none yet. Add them with `$camisa add` (attach the images; name each file like `Real Madrid 2002.png`).', '👕 Está el modo «solo reales» pero aún no hay camisetas tuyas. Añádelas con `$camisa añadir` (adjunta las imágenes y nombra cada archivo como `Real Madrid 2002.png`).'));
+      return ctx.reply(L(lc, '📷 I could not find a real shirt photo right now (the free photo sources are slow or have none). Try again in a few seconds, or add your own with `/camisa agregar`.', '📷 Ahora mismo no encontré una foto real de camiseta (las fuentes gratuitas tardan o no tienen). Prueba otra vez en unos segundos, o añade las tuyas con `/camisa agregar`.'));
     }
-    const e = new EmbedBuilder()
-      .setColor(COLOR.blue || 0x3498db)
-      .setTitle('⚡ CATCH UP!')
-      .setDescription(
-        '**' + k.team + '**\n' +
-        L(lc, '🗓️ What **year** is this shirt from? Type the year in the chat (e.g. `2004`).', '🗓️ ¿De qué **año** es esta camiseta? Escribe el año en el chat (ej. `2004`).') + '\n' +
-        L(lc, '🏁 The first correct answer wins 🪙!  ⏱️ ' + ROUND_MS / 1000 + ' s · ' + MAX_GUESSES + ' tries each', '🏁 ¡La primera respuesta correcta gana 🪙!  ⏱️ ' + ROUND_MS / 1000 + ' s · ' + MAX_GUESSES + ' intentos cada uno')
-      )
-      .setImage('attachment://' + k.name)
-      .setFooter({ text: L(lc, 'Tip: the design changes with every era', 'Pista: el diseño cambia con cada época') });
+    const id = newId();
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('camisa:c:' + id).setLabel('Catch me').setStyle(ButtonStyle.Primary));
+    let sent;
     try {
-      if (ctx.kind === 'slash') await ctx.reply({ embeds: [e], files: [{ attachment: k.png, name: k.name }] });
-      else await ch.send({ embeds: [e], files: [{ attachment: k.png, name: k.name }] });
+      sent = await ch.send({
+        content: '⚡ **CATCH UP!** ' + L(lc, 'A wild shirt appeared!', '¡Ha aparecido una camiseta salvaje!') + ' 👕\n💡 ' + L(lc, 'Press **Catch me** and tell me the club and the year.', 'Pulsa **Catch me** y dime el club y el año.'),
+        files: [{ attachment: k.png, name: k.name }], components: [row], allowedMentions: { parse: [] },
+      });
     } catch (err) {
       rounds.delete(ch.id);
       logErr('[camisas] no se pudo enviar la camiseta: ' + err.message);
-      return ctx.reply(L(lc, '⚠️ I could not send the shirt: ', '⚠️ No pude enviar la camiseta: ') + '`' + String(err.message).slice(0, 180) + '`\n' + L(lc, 'Check my permissions in this channel (**Attach files**, **Embed links**, **Send messages**) and run `/camisa estado`.', 'Revisa mis permisos en este canal (**Adjuntar archivos**, **Insertar enlaces**, **Enviar mensajes**) y usa `/camisa estado`.'));
+      return ctx.reply(L(lc, '⚠️ I could not send the shirt: ', '⚠️ No pude enviar la camiseta: ') + '`' + String(err.message).slice(0, 180) + '`\n' + L(lc, 'Check my permissions in this channel (**Attach files**, **Send messages**) and run `/camisa estado`.', 'Revisa mis permisos en este canal (**Adjuntar archivos**, **Enviar mensajes**) y usa `/camisa estado`.'));
     }
+    if (ctx.done) await ctx.done();
 
-    const r = { gid: ctx.guild.id, answer: k.year, team: k.team, t0: Date.now(), guesses: new Map(), lc, channel: ch, timers: [] };
+    const r = { id, gid: ctx.guild.id, kit: k, t0: Date.now(), guesses: new Map(), lc, channel: ch, msg: sent, timers: [], closed: false };
     rounds.set(ch.id, r);
-    r.timers.push(setTimeout(() => ch.send(L(lc, '💡 Hint: it is from the **' + decade(k.year) + 's**.', '💡 Pista: es de los **años ' + decade(k.year) + '**.')).catch(() => {}), HINT1_MS));
-    r.timers.push(setTimeout(() => {
-      const lo = k.year - Math.floor(Math.random() * 5);
-      ch.send(L(lc, '💡 Second hint: between **' + lo + '** and **' + (lo + 5) + '**.', '💡 Segunda pista: entre **' + lo + '** y **' + (lo + 5) + '**.')).catch(() => {});
-    }, HINT2_MS));
-    r.timers.push(setTimeout(() => endRound(ch.id, null), ROUND_MS));
+    byId.set(id, r);
+    r.timers.push(setTimeout(() => ch.send({ content: L(lc, '💡 Hint: it is from the **' + decade(k.year) + 's**.', '💡 Pista: es de los **años ' + decade(k.year) + '**.'), allowedMentions: { parse: [] } }).catch(() => {}), HINT1_MS));
+    r.timers.push(setTimeout(() => ch.send({ content: L(lc, '💡 Second hint: the club starts with **' + clip(k.team, 1).toUpperCase() + '**.', '💡 Segunda pista: el club empieza por **' + clip(k.team, 1).toUpperCase() + '**.'), allowedMentions: { parse: [] } }).catch(() => {}), HINT2_MS));
+    r.timers.push(setTimeout(() => timeUp(r), ROUND_MS));
   } catch (e) {
     rounds.delete(ch.id);
     throw e;
   }
 }
 
-function endRound(chId, winner) {
-  const r = rounds.get(chId);
-  if (!r || r.pending) return;
-  rounds.delete(chId);
+// Cierra la ronda y deja el mensaje con el resultado (sin botón)
+function finish(r, text) {
+  if (r.closed) return;
+  r.closed = true;
   for (const t of r.timers) clearTimeout(t);
-  if (winner) return;
+  if (rounds.get(r.channel.id) === r) rounds.delete(r.channel.id);
+  byId.delete(r.id);
+  if (r.msg && r.msg.edit) r.msg.edit({ content: String(text).slice(0, 1900), components: [], allowedMentions: { parse: [] } }).catch(() => {});
+}
+
+function timeUp(r) {
+  if (r.closed) return;
   // Nadie acertó: se rompen las rachas de quien lo intentó
   for (const uid of r.guesses.keys()) {
     const a = games.acct(r.gid, uid);
     if (a.shirt) a.shirt.streak = 0;
   }
   games.eco.save();
-  const e = new EmbedBuilder().setColor(COLOR.red || 0xe74c3c).setTitle('⏱️ ' + L(r.lc, 'Time is up!', '¡Se acabó el tiempo!'))
-    .setDescription(L(r.lc, 'It was **' + r.team + '**, **' + r.answer + '**. Nobody got it.', 'Era **' + r.team + '**, **' + r.answer + '**. Nadie acertó.') + '\n' + L(r.lc, 'Try another with `$camisa`.', 'Prueba otra con `$camisa`.'));
-  r.channel.send({ embeds: [e] }).catch(() => {});
+  finish(r, '⏱️ ' + L(r.lc, 'Time is up! Nobody caught it. It was **', '¡Se acabó el tiempo! Nadie la atrapó. Era **') + lbl(r.kit) + '**' + creditLine(r.kit));
 }
 
-const counters = new Map(); // canal -> mensajes desde la última camiseta
-async function onMessage(msg) {
-  if (!msg.guild || !msg.author || msg.author.bot) return;
-  const r = rounds.get(msg.channelId);
-  if (!r) {
-    // Camiseta automática: cada N mensajes en el canal elegido con «$camisa canal»
-    const cfg = getCfg(msg.guild.id);
-    const sh = cfg.shirts || {};
-    if (!sh.channel || sh.channel !== msg.channelId) return;
-    if (/^[$!.]/.test(msg.content || '')) return; // los comandos no cuentan
-    const n = (counters.get(msg.channelId) || 0) + 1;
-    if (n < (sh.every || 10)) { counters.set(msg.channelId, n); return; }
-    counters.set(msg.channelId, 0);
-    const ctx = {
-      channel: msg.channel, guild: msg.guild, locale: msg.guild.preferredLocale,
-      defer: () => msg.channel.sendTyping().catch(() => {}),
-      reply: (p) => msg.channel.send(p),
-    };
-    return startRound(ctx);
+/* ============================ botón «Catch me» y cuadro de respuesta ============================ */
+const owns = (i) => !!(i && i.customId && String(i.customId).startsWith('camisa:') && ((i.isButton && i.isButton()) || (i.isModalSubmit && i.isModalSubmit())));
+
+async function handleInteraction(i) {
+  const [, kind, id] = String(i.customId).split(':');
+  const lc = i.locale;
+  const r = byId.get(id);
+  if (!r || r.closed) return i.reply({ content: L(lc, '⌛ This shirt is gone. Wait for the next one!', '⌛ Esta camiseta ya no está. ¡Espera a la siguiente!'), flags: EPH });
+  if (kind === 'c') {
+    if ((r.guesses.get(i.user.id) || 0) >= MAX_GUESSES) return i.reply({ content: L(lc, 'No more tries for you on this shirt.', 'Ya no te quedan intentos con esta camiseta.'), flags: EPH });
+    const modal = new ModalBuilder().setCustomId('camisa:m:' + id).setTitle(L(lc, 'Which shirt is this?', '¿De qué camiseta se trata?')).addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('club').setLabel(L(lc, 'Club or team', 'Club o equipo')).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(60).setPlaceholder('Real Madrid')),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('year').setLabel(L(lc, 'Year of the shirt (e.g. 2002)', 'Año de la camiseta (ej. 2002)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(9).setPlaceholder('2002')),
+    );
+    return i.showModal(modal);
   }
-  if (r.pending) return;
-  const y = guessOf(msg.content);
-  if (y === null) return;
-  const n = (r.guesses.get(msg.author.id) || 0) + 1;
-  if (n > MAX_GUESSES) return;
-  r.guesses.set(msg.author.id, n);
+  if (kind === 'm') return onSubmit(i, r);
+}
+
+async function onSubmit(i, r) {
   const lc = r.lc;
+  const club = i.fields.getTextInputValue('club');
+  let yearTxt = '';
+  try { yearTxt = i.fields.getTextInputValue('year') || ''; } catch (_) { /* campo vacío */ }
+  const n = (r.guesses.get(i.user.id) || 0) + 1;
+  if (n > MAX_GUESSES) return i.reply({ content: L(lc, 'No more tries for you on this shirt.', 'Ya no te quedan intentos con esta camiseta.'), flags: EPH });
+  r.guesses.set(i.user.id, n);
 
-  if (y !== r.answer) {
-    const d = Math.abs(y - r.answer);
-    await msg.react(d <= 2 ? '🔥' : d <= 5 ? '🙂' : '🧊').catch(() => {});
-    if (n === MAX_GUESSES) msg.reply({ content: L(lc, 'No more tries for you this round.', 'Ya no te quedan intentos en esta ronda.'), allowedMentions: { repliedUser: false } }).catch(() => {});
-    return;
+  if (!clubOk(club, r.kit)) {
+    const left = MAX_GUESSES - n;
+    return i.reply({ content: '❌ ' + L(lc, '**' + clip(club, 40) + '** is not the club. ', '**' + clip(club, 40) + '** no es el club. ') + (left ? L(lc, 'Tries left: ', 'Intentos que te quedan: ') + left : L(lc, 'No more tries for you.', 'Ya no te quedan intentos.')), flags: EPH });
   }
 
-  // ¡Acierto!
+  // ¡Atrapada! (todo síncrono hasta cerrar la ronda para que solo gane uno)
+  if (r.closed) return i.reply({ content: L(lc, '⌛ Someone was faster than you!', '⌛ ¡Alguien se te adelantó!'), flags: EPH });
+  const m = String(yearTxt).match(/(?:19|20)\d{2}/);
+  const gy = m ? parseInt(m[0], 10) : null;
+  const yp = gy ? yearPts(gy, r.kit) : 0;
   const left = Math.max(0, ROUND_MS - (Date.now() - r.t0));
-  const speed = Math.round(100 * (left / ROUND_MS));
-  const a = games.acct(r.gid, msg.author.id);
+  const speed = Math.round(50 * (left / ROUND_MS));
+  const a = games.acct(r.gid, i.user.id);
   a.shirt = a.shirt || { wins: 0, streak: 0, best: 0 };
   a.shirt.wins++;
   a.shirt.streak++;
   a.shirt.best = Math.max(a.shirt.best, a.shirt.streak);
   const streakBonus = Math.min(50, (a.shirt.streak - 1) * 10);
-  const total = BASE + speed + streakBonus;
+  const total = BASE + yp + speed + streakBonus;
   a.coins += total;
   games.eco.save();
-  endRound(msg.channelId, msg.author.id);
+  finish(r, '✅ **' + lbl(r.kit) + '** — ' + L(lc, 'caught by ', 'atrapada por ') + '<@' + i.user.id + '>' + creditLine(r.kit));
 
+  const yearLine = gy
+    ? '📅 ' + L(lc, 'Your year: ', 'Tu año: ') + gy + ' → ' + L(lc, 'it was ', 'era ') + '**' + r.kit.season + '** (+' + yp + ')'
+    : '📅 ' + L(lc, 'You did not give a year (it was **', 'No pusiste año (era **') + r.kit.season + '**) (+0)';
   const e = new EmbedBuilder().setColor(COLOR.green || 0x2ecc71).setTitle('🏆 CATCH UP!')
     .setDescription(
-      '<@' + msg.author.id + '> ' + L(lc, 'nailed it! It was **' + r.team + '**, **' + r.answer + '**.', '¡lo clavó! Era **' + r.team + '**, **' + r.answer + '**.') + '\n\n' +
-      '**+' + games.coinsTxt(total) + '**  (' + L(lc, 'base ', 'base ') + BASE + ' + ' + L(lc, 'speed ', 'rapidez ') + speed + (streakBonus ? ' + ' + L(lc, 'streak ', 'racha ') + streakBonus : '') + ')\n' +
+      '<@' + i.user.id + '> ' + L(lc, 'caught **' + lbl(r.kit) + '**!', '¡atrapó **' + lbl(r.kit) + '**!') + '\n' + yearLine + '\n\n' +
+      '**+' + games.coinsTxt(total) + '**  (' + L(lc, 'club ', 'club ') + BASE + (yp ? ' + ' + L(lc, 'year ', 'año ') + yp : '') + ' + ' + L(lc, 'speed ', 'rapidez ') + speed + (streakBonus ? ' + ' + L(lc, 'streak ', 'racha ') + streakBonus : '') + ')\n' +
       '🔥 ' + L(lc, 'Streak: ', 'Racha: ') + a.shirt.streak + ' · ' + L(lc, 'Wins: ', 'Aciertos: ') + a.shirt.wins + '\n' +
       L(lc, 'Balance: ', 'Saldo: ') + games.coinsTxt(a.coins)
     );
-  msg.reply({ embeds: [e], allowedMentions: { repliedUser: false, users: [] } }).catch(() => {});
+  return i.reply({ embeds: [e], allowedMentions: { parse: [] } });
+}
+
+/* ============================ camiseta automática ============================ */
+const counters = new Map(); // canal -> mensajes desde la última camiseta
+async function onMessage(msg) {
+  if (!msg.guild || !msg.author || msg.author.bot) return;
+  if (rounds.has(msg.channelId)) return; // ya hay una camiseta en juego (se responde con el botón)
+  // Cada N mensajes en el canal elegido con «/camisa canal»
+  const cfg = getCfg(msg.guild.id);
+  const sh = cfg.shirts || {};
+  if (!sh.channel || sh.channel !== msg.channelId) return;
+  if (/^[$!.]/.test(msg.content || '')) return; // los comandos no cuentan
+  const n = (counters.get(msg.channelId) || 0) + 1;
+  if (n < (sh.every || 10)) { counters.set(msg.channelId, n); return; }
+  counters.set(msg.channelId, 0);
+  const ctx = {
+    channel: msg.channel, guild: msg.guild, locale: msg.guild.preferredLocale,
+    defer: () => msg.channel.sendTyping().catch(() => {}),
+    reply: (p) => msg.channel.send(p),
+  };
+  return startRound(ctx);
 }
 
 /* ============================ ranking y camisetas propias ============================ */
@@ -241,14 +303,14 @@ async function addKit(ctx) {
     if (!info || !(info.year >= 1900 && info.year <= 2035)) { bad.push(att.name + ' (' + L(lc, 'I need team and year in the file name', 'falta equipo y año en el nombre del archivo') + ')'); continue; }
     try { const id = await saveImage(ctx.guild.id, att, info.team, info.year); ok.push(info.team + ' ' + info.year + ' (`' + id + '`)'); } catch (_) { bad.push(att.name + ' (' + L(lc, 'download failed', 'no se pudo descargar') + ')'); }
   }
-  return ctx.reply((ok.length ? '✅ ' + L(lc, 'Added ', 'Añadidas ') + ok.length + ': ' + ok.join(', ').slice(0, 1200) : '') + (bad.length ? '\n⚠️ ' + L(lc, 'Skipped: ', 'Omitidas: ') + bad.join(', ').slice(0, 600) : '') + (ok.length ? '\n' + L(lc, 'Tip: `$camisa mode real` makes the game use only your shirts.', 'Consejo: `$camisa modo real` hace que el juego use solo tus camisetas.') : ''));
+  return ctx.reply((ok.length ? '✅ ' + L(lc, 'Added ', 'Añadidas ') + ok.length + ': ' + ok.join(', ').slice(0, 1200) : '') + (bad.length ? '\n⚠️ ' + L(lc, 'Skipped: ', 'Omitidas: ') + bad.join(', ').slice(0, 600) : '') + (ok.length ? '\n' + L(lc, 'Your shirts will show up between the real photos from the internet.', 'Tus camisetas saldrán entre las fotos reales de internet.') : ''));
 }
 
 function setChannel(ctx, at) {
   const lc = ctx.locale;
   if (!canConfigure(ctx.guild, ctx.user.id, ctx.member)) return ctx.reply(L(lc, '❌ You need the **Manage Server** permission.', '❌ Necesitas el permiso **Gestionar servidor**.'));
   const cfg = getCfg(ctx.guild.id);
-  cfg.shirts = { mode: 'mixed', channel: null, every: 10, ...(cfg.shirts || {}) };
+  cfg.shirts = { mode: 'real', channel: null, every: 10, ...(cfg.shirts || {}) };
   const raw = String(ctx.arg(at) || '').toLowerCase();
   if (['off', 'apagar', 'quitar', 'no'].includes(raw)) {
     cfg.shirts.channel = null;
@@ -270,7 +332,7 @@ function setEvery(ctx) {
   const n = parseInt(ctx.arg(1), 10);
   if (!(n >= 3 && n <= 100)) return ctx.reply(L(lc, 'Use a number from 3 to 100: `$camisa every 10`', 'Usa un número de 3 a 100: `$camisa cada 10`'));
   const cfg = getCfg(ctx.guild.id);
-  cfg.shirts = { mode: 'mixed', channel: null, every: 10, ...(cfg.shirts || {}), every: n };
+  cfg.shirts = { mode: 'real', channel: null, every: 10, ...(cfg.shirts || {}), every: n };
   saveCfg();
   return ctx.reply('✅ ' + L(lc, 'A shirt every **' + n + '** messages.', 'Una camiseta cada **' + n + '** mensajes.'));
 }
@@ -287,8 +349,12 @@ async function estado(ctx) {
   const mine = (store.data[ctx.guild.id] || []).length;
   let draw = '—';
   try { const t0 = Date.now(); const r = await kit.randomKit(); draw = '✅ ' + (Date.now() - t0) + ' ms · ' + Math.round(r.png.length / 1024) + ' KB'; } catch (e) { draw = '❌ ' + e.message; }
+  if (photos.stats().pool < 3) await photos.warm(2, 9000).catch(() => {});
+  const ps = photos.stats();
+  const pv = ps.providers;
+  const real = '📸 ' + ps.pool + ' ' + L(lc, 'real photos ready', 'fotos reales listas') + ' (' + ps.clubs + ' ' + L(lc, 'clubs', 'clubes') + ')\nCommons: ' + pv.commons.n + (pv.commons.err ? ' ⚠️ ' + pv.commons.err : '') + ' · Openverse: ' + pv.openverse.n + (pv.openverse.err ? ' ⚠️ ' + pv.openverse.err : '') + ' · Google: ' + (pv.google.enabled ? pv.google.n + (pv.google.err ? ' ⚠️ ' + pv.google.err : '') : L(lc, 'no key', 'sin clave'));
   const e = new EmbedBuilder().setColor(COLOR.blue || 0x3498db).setTitle('🩺 ' + L(lc, 'Shirt game status', 'Estado del juego de camisetas'))
-    .setDescription('**' + L(lc, 'Permissions in this channel', 'Permisos en este canal') + '**\n' + lines.join('\n') + '\n\n**' + L(lc, 'Drawing a shirt', 'Dibujar una camiseta') + ':** ' + draw + '\n**' + L(lc, 'Auto channel', 'Canal automático') + ':** ' + (sh.channel ? '<#' + sh.channel + '> · ' + L(lc, 'every ', 'cada ') + (sh.every || 10) : L(lc, 'off', 'apagado')) + '\n**' + L(lc, 'Mode', 'Modo') + ':** ' + (sh.mode || 'mixed') + ' · ' + L(lc, 'your shirts: ', 'tus camisetas: ') + mine);
+    .setDescription('**' + L(lc, 'Permissions in this channel', 'Permisos en este canal') + '**\n' + lines.join('\n') + '\n\n**' + L(lc, 'Real photos', 'Fotos reales') + ':** ' + real + '\n**' + L(lc, 'Drawing a shirt', 'Dibujar una camiseta') + ':** ' + draw + '\n**' + L(lc, 'Auto channel', 'Canal automático') + ':** ' + (sh.channel ? '<#' + sh.channel + '> · ' + L(lc, 'every ', 'cada ') + (sh.every || 10) : L(lc, 'off', 'apagado')) + '\n**' + L(lc, 'Mode', 'Modo') + ':** ' + (sh.mode || 'real') + ' · ' + L(lc, 'your shirts: ', 'tus camisetas: ') + mine);
   return ctx.reply({ embeds: [e] });
 }
 
@@ -298,7 +364,7 @@ function setMode(ctx) {
   const raw = String(ctx.arg(1) || '').toLowerCase();
   const map = { real: 'real', reales: 'real', mixto: 'mixed', mixed: 'mixed', mix: 'mixed', dibujadas: 'drawn', drawn: 'drawn', ficticias: 'drawn' };
   const cfg = getCfg(ctx.guild.id);
-  if (!map[raw]) return ctx.reply(L(lc, 'Current mode: **', 'Modo actual: **') + (cfg.shirts || {}).mode + '**\n`real` — ' + L(lc, 'only your shirts', 'solo tus camisetas') + '\n`mixto` — ' + L(lc, 'yours and drawn ones', 'las tuyas y las dibujadas') + '\n`dibujadas` — ' + L(lc, 'only the drawn (fictional) ones', 'solo las dibujadas (ficticias)') + '\n' + L(lc, 'Change it: `$camisa mode <real|mixed|drawn>`', 'Cámbialo: `$camisa modo <real|mixto|dibujadas>`'));
+  if (!map[raw]) return ctx.reply(L(lc, 'Current mode: **', 'Modo actual: **') + (cfg.shirts || {}).mode + '**\n`real` — ' + L(lc, 'real photos from the internet (+ yours)', 'fotos reales de internet (+ las tuyas)') + '\n`mixto` — ' + L(lc, 'real photos, drawn ones if none is found', 'fotos reales; dibujadas si no hay ninguna') + '\n`dibujadas` — ' + L(lc, 'only the drawn (fictional) ones', 'solo las dibujadas (ficticias)') + '\n' + L(lc, 'Change it: `$camisa mode <real|mixed|drawn>`', 'Cámbialo: `$camisa modo <real|mixto|dibujadas>`'));
   cfg.shirts = { ...(cfg.shirts || {}), mode: map[raw] };
   saveCfg();
   return ctx.reply('✅ ' + L(lc, 'Mode set to **', 'Modo: **') + map[raw] + '**');
@@ -336,6 +402,7 @@ function slashCtx(i, args) {
     kind: 'slash', raw: null, guild: i.guild, member: i.member, user: i.user, channel: i.channel, locale: i.locale, args,
     arg: (n) => args[n], id: (n) => idOf(args[n]), rest: (n) => args.slice(n).join(' '),
     defer: async () => { if (!i.deferred && !i.replied) await i.deferReply(); },
+    done: async () => { try { await i.deleteReply(); } catch (_) { /* sin respuesta que borrar */ } },
     reply: send,
   };
 }
@@ -372,7 +439,7 @@ function makeSlash() {
     .addSubcommand((s) => s.setName('cada').setDescription('Show a shirt every N messages (3-100)').setDescriptionLocalizations({ 'es-ES': 'Una camiseta cada N mensajes (3-100)', 'es-419': 'Una camiseta cada N mensajes (3-100)' })
       .addIntegerOption((o) => o.setName('mensajes').setDescription('Messages').setRequired(true).setMinValue(3).setMaxValue(100)))
     .addSubcommand((s) => s.setName('modo').setDescription('Where the shirts come from').setDescriptionLocalizations({ 'es-ES': 'De dónde salen las camisetas', 'es-419': 'De dónde salen las camisetas' })
-      .addStringOption((o) => o.setName('modo').setDescription('Mode').setRequired(true).addChoices({ name: 'Solo reales (las tuyas) / Real only', value: 'real' }, { name: 'Mixto / Mixed', value: 'mixto' }, { name: 'Solo dibujadas / Drawn only', value: 'dibujadas' })))
+      .addStringOption((o) => o.setName('modo').setDescription('Mode').setRequired(true).addChoices({ name: 'Fotos reales / Real photos', value: 'real' }, { name: 'Reales + dibujadas si faltan / Real, drawn as backup', value: 'mixto' }, { name: 'Solo dibujadas / Drawn only', value: 'dibujadas' })))
     .addSubcommand((s) => s.setName('agregar').setDescription('Add your own shirt image').setDescriptionLocalizations({ 'es-ES': 'Añade una camiseta tuya (imagen)', 'es-419': 'Añade una camiseta tuya (imagen)' })
       .addAttachmentOption((o) => o.setName('imagen').setDescription('Shirt image').setRequired(true))
       .addStringOption((o) => o.setName('equipo').setDescription('Team name').setRequired(true).setMaxLength(60))
@@ -455,6 +522,11 @@ function register(def) {
 
 function attach(client) {
   client.on('messageCreate', (m) => onMessage(m).catch(logErr));
+  // Al conectar, prueba las fuentes de fotos y deja el resultado en los logs
+  let tested = false;
+  const test = () => { if (tested) return; tested = true; photos.selfTest().catch((e) => console.log('[camisas] autoprueba: ' + e.message)); };
+  client.once('clientReady', test);
+  client.once('ready', test);
 }
 
-module.exports = { register, attach, commands: camisaSlash ? [camisaSlash] : [] };
+module.exports = { register, attach, owns, handleInteraction, commands: camisaSlash ? [camisaSlash] : [] };
