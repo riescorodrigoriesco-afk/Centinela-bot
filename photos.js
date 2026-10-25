@@ -6,7 +6,8 @@
  * Fuentes (en este orden, todas con crédito al autor):
  *   · Wikimedia Commons  (gratis, sin clave, fotos con licencia libre)
  *   · Openverse          (gratis, sin clave, fotos con licencia libre de Flickr/Wikimedia)
- *   · Google Imágenes    (opcional: variables GOOGLE_API_KEY y GOOGLE_CX, 100 búsquedas gratis al día)
+ *   · Serper             (opcional: SERPER_API_KEY, Google Imágenes por API, 2.500 búsquedas gratis al registrarse) ← la que más fotos de camisetas tiene
+ *   · Google Imágenes    (opcional: GOOGLE_API_KEY y GOOGLE_CX, 100 búsquedas gratis al día)
  *
  * El año sale del TÍTULO de la foto («Real Madrid home shirt 2002-03»); si el título no trae un año claro,
  * la foto se descarta para no inventar la respuesta. Se descartan escudos, plantillas dibujadas, estadios, etc.
@@ -126,8 +127,8 @@ async function getJson(url) {
   return r.json();
 }
 
-const off = { commons: 0, openverse: 0, google: 0 }; // proveedor apagado hasta (ms)
-const st = { commons: { n: 0, err: '' }, openverse: { n: 0, err: '' }, google: { n: 0, err: '' } };
+const off = { serper: 0, commons: 0, openverse: 0, google: 0 }; // proveedor apagado hasta (ms)
+const st = { serper: { n: 0, err: '' }, commons: { n: 0, err: '' }, openverse: { n: 0, err: '' }, google: { n: 0, err: '' } };
 
 async function commonsSearch(q, offset) {
   const u = 'https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
@@ -159,7 +160,7 @@ async function fromOpenverse(club, page) {
 async function fromGoogle(club, page) {
   const key = process.env.GOOGLE_API_KEY, cx = process.env.GOOGLE_CX;
   if (!key || !cx) return [];
-  const u = 'https://www.googleapis.com/customsearch/v1?' + new URLSearchParams({ key, cx, q: club.q + ' camiseta shirt jersey', searchType: 'image', num: '10', start: String((page || 0) * 10 + 1), safe: 'active', imgSize: 'large' });
+  const u = 'https://www.googleapis.com/customsearch/v1?' + new URLSearchParams({ key, cx, q: club.q + ' ' + randSeason() + ' shirt', searchType: 'image', num: '10', start: '1', safe: 'active', imgSize: 'large' });
   const j = await getJson(u);
   return (j.items || []).map((x) => {
     let host = '';
@@ -168,9 +169,24 @@ async function fromGoogle(club, page) {
   }).filter((x) => x.url);
 }
 
-const fromCommons = (club, offset) => commonsSearch(club.q + ' (shirt OR jersey OR camiseta OR maillot OR trikot OR maglia) filetype:bitmap', offset);
+const fromCommons = (club, offset) => commonsSearch(club.q + ' shirt', offset);
 
-const PROVIDERS = [['commons', fromCommons], ['openverse', fromOpenverse], ['google', fromGoogle]];
+// Temporada al azar para variar los años: «2002-03»
+const randSeason = () => { const y = 1992 + Math.floor(Math.random() * 32); return y + '-' + String(y + 1).slice(2); };
+
+async function fromSerper(club) {
+  const key = process.env.SERPER_API_KEY;
+  if (!key) return [];
+  const r = await fetch('https://google.serper.dev/images', {
+    method: 'POST', headers: { 'X-API-KEY': key, 'Content-Type': 'application/json', 'User-Agent': UA },
+    body: JSON.stringify({ q: club.q + ' ' + randSeason() + ' home shirt', num: 30 }), signal: AbortSignal.timeout(12000),
+  });
+  if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+  const j = await r.json();
+  return (j.images || []).map((x) => ({ title: x.title || '', url: x.imageUrl, thumb: x.thumbnailUrl, page: x.link, author: x.domain || x.source || '', license: '', source: 'serper' })).filter((x) => x.url);
+}
+
+const PROVIDERS = [['serper', fromSerper], ['commons', fromCommons], ['openverse', fromOpenverse], ['google', fromGoogle]];
 
 /* ---------- reserva de fotos ---------- */
 const pool = []; // { key, club, year, year2, label, url, thumb, page, author, license, source, title }
@@ -267,7 +283,7 @@ async function pick(gid) {
   return null;
 }
 
-const stats = () => ({ pool: pool.length, clubs: new Set(pool.map((p) => p.club.name)).size, providers: { commons: st.commons, openverse: st.openverse, google: { ...st.google, enabled: !!(process.env.GOOGLE_API_KEY && process.env.GOOGLE_CX) } } });
+const stats = () => ({ pool: pool.length, clubs: new Set(pool.map((p) => p.club.name)).size, providers: { serper: { ...st.serper, enabled: !!process.env.SERPER_API_KEY }, commons: st.commons, openverse: st.openverse, google: { ...st.google, enabled: !!(process.env.GOOGLE_API_KEY && process.env.GOOGLE_CX) } } });
 
 // Sonda de diagnóstico: qué devuelve Commons con distintas búsquedas
 async function probe() {
@@ -280,15 +296,26 @@ async function probe() {
   }
 }
 
+async function catProbe() {
+  for (const c of ['Association football shirts', 'Football shirts', 'Football jerseys', 'Association football jerseys', 'Football kits', 'Camisetas de fútbol']) {
+    const u = 'https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({ action: 'query', format: 'json', list: 'categorymembers', cmtitle: 'Category:' + c, cmlimit: '30', cmtype: 'file|subcat' });
+    try {
+      const j = await getJson(u);
+      const m = (j.query && j.query.categorymembers) || [];
+      console.log('[camisas] sonda categoría «' + c + '» → ' + m.length + ' · ' + m.slice(0, 8).map((x) => clean(x.title).slice(0, 40)).join(' | '));
+    } catch (e) { console.log('[camisas] sonda categoría «' + c + '» falló: ' + e.message); }
+  }
+}
+
 // Al arrancar: prueba las fuentes y deja el resultado en los logs
 async function selfTest() {
   const t0 = Date.now();
-  await probe();
+  await catProbe();
   try {
     await warm(5, 25000);
   } catch (e) { console.log('[camisas] autoprueba de fotos falló: ' + e.message); }
   const s = stats();
-  console.log('[camisas] fotos reales: reserva=' + s.pool + ' clubes=' + s.clubs + ' | commons=' + s.providers.commons.n + (s.providers.commons.err ? '(' + s.providers.commons.err + ')' : '') + ' openverse=' + s.providers.openverse.n + (s.providers.openverse.err ? '(' + s.providers.openverse.err + ')' : '') + ' google=' + (s.providers.google.enabled ? s.providers.google.n : 'sin clave') + ' | ' + (Date.now() - t0) + ' ms');
+  console.log('[camisas] fotos reales: reserva=' + s.pool + ' clubes=' + s.clubs + ' | commons=' + s.providers.commons.n + (s.providers.commons.err ? '(' + s.providers.commons.err + ')' : '') + ' openverse=' + s.providers.openverse.n + (s.providers.openverse.err ? '(' + s.providers.openverse.err + ')' : '') + ' google=' + (s.providers.google.enabled ? s.providers.google.n : 'sin clave') + ' serper=' + (s.providers.serper.enabled ? s.providers.serper.n + (s.providers.serper.err ? '(' + s.providers.serper.err + ')' : '') : 'sin clave') + ' | ' + (Date.now() - t0) + ' ms');
   for (const p of pool.slice(0, 5)) console.log('[camisas]   · ' + p.club.name + ' ' + p.label + ' ← «' + clean(p.title).slice(0, 80) + '» (' + p.source + ')');
 }
 
