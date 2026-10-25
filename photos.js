@@ -111,13 +111,15 @@ function parseSeason(text) {
 }
 
 // ¿Esta foto sirve para el juego? Devuelve { year, year2, label } o null
-function accept(club, title) {
+function accept(club, title, desc) {
   const t = clean(title);
-  if (!SHIRT.test(t) || BAD.test(t)) return null;
-  if (!club.has(t)) return null;
+  const d = String(desc || '');
+  if (BAD.test(t)) return null;
+  if (!(SHIRT.test(t) || SHIRT.test(d))) return null; // tiene que ser una camiseta
+  if (!club.has(t) && !(d && club.has(d))) return null;
   const nt = norm(t);
   if ((club.x || []).some((x) => nt.includes(norm(x)))) return null; // es de otro club con nombre parecido
-  return parseSeason(t);
+  return parseSeason(t) || parseSeason(d);
 }
 
 /* ---------- red ---------- */
@@ -133,7 +135,7 @@ const st = { serper: { n: 0, err: '' }, commons: { n: 0, err: '' }, openverse: {
 async function commonsSearch(q, offset) {
   const u = 'https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
     action: 'query', format: 'json', generator: 'search', gsrsearch: q, gsrnamespace: '6', gsrlimit: '50', gsroffset: String(offset || 0),
-    prop: 'imageinfo', iiprop: 'url|mime|extmetadata', iiurlwidth: '900', iiextmetadatafilter: 'Artist|LicenseShortName', iiextmetadatalanguage: 'en',
+    prop: 'imageinfo', iiprop: 'url|mime|size|extmetadata', iiurlwidth: '900', iiextmetadatafilter: 'Artist|LicenseShortName|ImageDescription', iiextmetadatalanguage: 'en',
   });
   const j = await getJson(u);
   const pages = j.query && j.query.pages ? Object.values(j.query.pages) : [];
@@ -141,8 +143,9 @@ async function commonsSearch(q, offset) {
     const ii = (p.imageinfo || [])[0];
     if (!ii || !/^image\/(jpeg|png|webp)/i.test(ii.mime || '')) return null;
     const md = ii.extmetadata || {};
+    if (ii.width && ii.width < 450) return null; // demasiado pequeña
     return {
-      title: p.title, url: ii.thumburl || ii.url, page: ii.descriptionurl,
+      title: p.title, url: ii.thumburl || ii.url, page: ii.descriptionurl, desc: strip(md.ImageDescription && md.ImageDescription.value).slice(0, 300),
       author: strip(md.Artist && md.Artist.value).slice(0, 60), license: strip(md.LicenseShortName && md.LicenseShortName.value).slice(0, 30), source: 'commons',
     };
   }).filter(Boolean);
@@ -169,7 +172,14 @@ async function fromGoogle(club, page) {
   }).filter((x) => x.url);
 }
 
-const fromCommons = (club, offset) => commonsSearch(club.q + ' shirt', offset);
+const CAT_ROOTS = ['Association football jerseys', 'Football jerseys', 'Football shirts', 'Association football shirts'];
+async function fromCommons(club, offset) {
+  for (const root of CAT_ROOTS) {
+    const items = await commonsSearch('deepcat:"' + root + '" ' + club.q, offset);
+    if (items.length) return items;
+  }
+  return [];
+}
 
 // Temporada al azar para variar los años: «2002-03»
 const randSeason = () => { const y = 1992 + Math.floor(Math.random() * 32); return y + '-' + String(y + 1).slice(2); };
@@ -202,9 +212,9 @@ async function fetchClub(club) {
     if (Date.now() < off[name]) continue;
     try {
       const items = await fn(club, n);
-      if (n === 0) console.log('[camisas] fotos: ' + name + ' «' + club.q + '» → ' + items.length + ' resultados, válidos ' + items.filter((it) => accept(club, it.title)).length + (items.length ? ' · ej: ' + items.slice(0, 3).map((it) => clean(it.title).slice(0, 60)).join(' | ') : ''));
+      if (n === 0) console.log('[camisas] fotos: ' + name + ' «' + club.q + '» → ' + items.length + ' resultados, válidos ' + items.filter((it) => accept(club, it.title, it.desc)).length + (items.length ? ' · ej: ' + items.slice(0, 3).map((it) => clean(it.title).slice(0, 60)).join(' | ') : ''));
       for (const it of items) {
-        const s = accept(club, it.title);
+        const s = accept(club, it.title, it.desc);
         if (!s) continue;
         const key = name + ':' + it.url;
         if (pool.some((p) => p.key === key)) continue;
@@ -261,6 +271,8 @@ const used = new Map(); // servidor -> claves ya usadas
 
 // Devuelve una camiseta real lista para enviar, o null si no hay ahora mismo
 async function pick(gid) {
+  if (!pool.length && crawling) await Promise.race([crawling, sleep(20000)]);
+  if (!pool.length && !crawled) await Promise.race([startCrawl(), sleep(20000)]);
   if (!pool.length && Date.now() < dryUntil) return null; // las fuentes no tienen nada ahora mismo: no hacer esperar
   if (pool.length < 6) await warm(4, 9000).catch(() => {});
   else if (pool.length < 40 && Date.now() >= dryUntil) warm(2, 6000).catch(() => {});
@@ -289,6 +301,124 @@ async function pick(gid) {
 
 const stats = () => ({ pool: pool.length, clubs: new Set(pool.map((p) => p.club.name)).size, providers: { serper: { ...st.serper, enabled: !!process.env.SERPER_API_KEY }, commons: st.commons, openverse: st.openverse, google: { ...st.google, enabled: !!(process.env.GOOGLE_API_KEY && process.env.GOOGLE_CX) } } });
 
+/* ---------- rastreo de las categorías de camisetas de Commons ---------- */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let crawling = null;
+let crawled = false;
+
+async function catPage(cat, type, cont) {
+  const q = { action: 'query', format: 'json', list: 'categorymembers', cmtitle: 'Category:' + cat, cmtype: type, cmlimit: '500' };
+  if (cont) q.cmcontinue = cont;
+  const j = await getJson('https://commons.wikimedia.org/w/api.php?' + new URLSearchParams(q));
+  return { items: (j.query && j.query.categorymembers) || [], next: j.continue && j.continue.cmcontinue };
+}
+
+const clubOf = (text) => {
+  const t = flat(text);
+  return CLUBS.find((c) => c.has(t) && !c.x.some((x) => norm(t).includes(norm(x)))) || null;
+};
+
+async function crawl(budgetMs) {
+  const t0 = Date.now();
+  const seenCat = new Set();
+  const queue = CAT_ROOTS.map((c) => ({ cat: c, path: [c], d: 0 }));
+  const files = new Map(); // título -> ruta de categorías
+  const tree = [];
+  let cats = 0;
+  while (queue.length && cats < 160 && Date.now() - t0 < budgetMs && files.size < 5000) {
+    const { cat, path, d } = queue.shift();
+    if (seenCat.has(cat)) continue;
+    seenCat.add(cat);
+    cats++;
+    try {
+      let cont;
+      let nf = 0;
+      for (let pg = 0; pg < 3; pg++) {
+        const r = await catPage(cat, 'file', cont);
+        for (const f of r.items) if (!files.has(f.title)) { files.set(f.title, path); nf++; }
+        cont = r.next;
+        if (!cont) break;
+        await sleep(100);
+      }
+      let ns = 0;
+      if (d < 4) {
+        const r = await catPage(cat, 'subcat');
+        for (const sc of r.items) {
+          const name = sc.title.replace(/^Category:/, '');
+          const node = { cat: name, path: [...path, name], d: d + 1 };
+          if (clubOf(name)) queue.unshift(node); else queue.push(node);
+          ns++;
+        }
+      }
+      if (tree.length < 40) tree.push(cat + ' (' + nf + ' fotos, ' + ns + ' subcat.)');
+    } catch (e) {
+      console.log('[camisas] rastreo «' + cat + '» falló: ' + e.message);
+      if (e.status === 429) break;
+    }
+    await sleep(100);
+  }
+  console.log('[camisas] rastreo: ' + cats + ' categorías, ' + files.size + ' archivos | ' + tree.slice(0, 14).join(' ; '));
+
+  // Candidatas: club conocido (por título o por categoría) y no dibujos/escudos
+  const cand = [];
+  const noClub = [];
+  for (const [title, path] of files) {
+    if (!/\.(jpe?g|png|webp)$/i.test(title)) continue;
+    const t = clean(title);
+    if (BAD.test(t)) continue;
+    let club = clubOf(t);
+    if (!club) for (const pc of [...path].reverse()) { club = clubOf(pc); if (club) break; }
+    if (!club) { if (noClub.length < 8) noClub.push(t.slice(0, 50)); continue; }
+    cand.push({ title, club });
+  }
+  console.log('[camisas] rastreo: ' + cand.length + ' candidatas con club conocido · sin club, ej: ' + noClub.join(' | '));
+
+  // Datos de cada candidata (dirección, licencia, descripción) de 40 en 40
+  let added = 0;
+  const noYear = [];
+  const sample = [];
+  for (let i = 0; i < cand.length && i < 800 && Date.now() - t0 < budgetMs + 60000; i += 40) {
+    const batch = cand.slice(i, i + 40);
+    try {
+      const j = await getJson('https://commons.wikimedia.org/w/api.php?' + new URLSearchParams({
+        action: 'query', format: 'json', titles: batch.map((b) => b.title).join('|'), prop: 'imageinfo', iiprop: 'url|mime|size|extmetadata',
+        iiurlwidth: '900', iiextmetadatafilter: 'Artist|LicenseShortName|ImageDescription', iiextmetadatalanguage: 'en',
+      }));
+      const pages = j.query && j.query.pages ? Object.values(j.query.pages) : [];
+      for (const pg of pages) {
+        const c = batch.find((b) => b.title === pg.title) || batch.find((b) => flat(b.title) === flat(pg.title));
+        const ii = (pg.imageinfo || [])[0];
+        if (!c || !ii || !/^image\/(jpeg|png|webp)/i.test(ii.mime || '') || (ii.width && ii.width < 450)) continue;
+        const md = ii.extmetadata || {};
+        const desc = strip(md.ImageDescription && md.ImageDescription.value).slice(0, 300);
+        const t = clean(pg.title);
+        if (!(SHIRT.test(t) || SHIRT.test(desc) || SHIRT.test((files.get(c.title) || []).join(' ')))) continue;
+        const sn = parseSeason(t) || parseSeason(desc);
+        if (!sn) { if (noYear.length < 6) noYear.push(t.slice(0, 50)); continue; }
+        const key = 'commons:' + (ii.thumburl || ii.url);
+        if (pool.some((x) => x.key === key)) continue;
+        pool.push({ key, club: c.club, year: sn.year, year2: sn.year2, label: sn.label, title: pg.title, url: ii.thumburl || ii.url, page: ii.descriptionurl, desc,
+          author: strip(md.Artist && md.Artist.value).slice(0, 60), license: strip(md.LicenseShortName && md.LicenseShortName.value).slice(0, 30), source: 'commons' });
+        st.commons.n++;
+        added++;
+        if (sample.length < 8) sample.push(c.club.name + ' ' + sn.label + ' ← ' + t.slice(0, 50));
+      }
+    } catch (e) {
+      console.log('[camisas] rastreo datos falló: ' + e.message);
+      if (e.status === 429) break;
+    }
+    await sleep(150);
+  }
+  console.log('[camisas] rastreo: ' + added + ' fotos reales añadidas (' + new Set(pool.map((x) => x.club.name)).size + ' clubes) · sin año, ej: ' + noYear.join(' | ') + ' · ej: ' + sample.join(' | ') + ' · ' + (Date.now() - t0) + ' ms');
+  return added;
+}
+
+function startCrawl(budgetMs) {
+  if (crawling) return crawling;
+  crawling = crawl(budgetMs || 90000).catch((e) => console.log('[camisas] rastreo falló: ' + e.message)).finally(() => { crawling = null; crawled = true; });
+  return crawling;
+}
+
 // Sonda de diagnóstico: qué devuelve Commons con distintas búsquedas
 async function probe() {
   const qs = ['Real Madrid shirt', 'Real Madrid jersey', 'Real Madrid camiseta', 'FC Barcelona jersey filetype:bitmap', 'football shirt 2002', 'camiseta fútbol 1998', 'Manchester United shirt 1999'];
@@ -314,13 +444,13 @@ async function catProbe() {
 // Al arrancar: prueba las fuentes y deja el resultado en los logs
 async function selfTest() {
   const t0 = Date.now();
-  await catProbe();
+  startCrawl(90000); // en segundo plano
   try {
-    await warm(5, 25000);
+    await warm(3, 15000);
   } catch (e) { console.log('[camisas] autoprueba de fotos falló: ' + e.message); }
   const s = stats();
   console.log('[camisas] fotos reales: reserva=' + s.pool + ' clubes=' + s.clubs + ' | commons=' + s.providers.commons.n + (s.providers.commons.err ? '(' + s.providers.commons.err + ')' : '') + ' openverse=' + s.providers.openverse.n + (s.providers.openverse.err ? '(' + s.providers.openverse.err + ')' : '') + ' google=' + (s.providers.google.enabled ? s.providers.google.n : 'sin clave') + ' serper=' + (s.providers.serper.enabled ? s.providers.serper.n + (s.providers.serper.err ? '(' + s.providers.serper.err + ')' : '') : 'sin clave') + ' | ' + (Date.now() - t0) + ' ms');
   for (const p of pool.slice(0, 5)) console.log('[camisas]   · ' + p.club.name + ' ' + p.label + ' ← «' + clean(p.title).slice(0, 80) + '» (' + p.source + ')');
 }
 
-module.exports = { CLUBS, pick, warm, stats, selfTest, parseSeason, accept, norm };
+module.exports = { CLUBS, pick, warm, stats, selfTest, parseSeason, accept, norm, startCrawl };
