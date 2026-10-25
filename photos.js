@@ -255,7 +255,7 @@ function warm(count, budgetMs) {
     for (const club of order.slice(0, count)) {
       if (budgetMs && Date.now() - t0 > budgetMs) break;
       await fetchClub(club);
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, budgetMs > 60000 ? 900 : 250));
     }
     dryUntil = pool.length === before ? Date.now() + 600000 : 0;
   })().finally(() => { warming = null; });
@@ -452,6 +452,13 @@ async function testDownloads() {
 function startCrawl(budgetMs) {
   if (crawling) return crawling;
   crawling = crawl(budgetMs || 150000).then(() => testDownloads()).catch((e) => console.log('[camisas] rastreo falló: ' + e.message)).finally(() => { crawling = null; crawled = true; });
+  // Después, en segundo plano y sin prisa, una búsqueda por cada club para llenar la reserva
+  crawling.then(async () => {
+    if (pool.length < 6) return;
+    const n0 = pool.length;
+    await warm(CLUBS.length, 420000).catch((e) => console.log('[camisas] llenado falló: ' + e.message));
+    console.log('[camisas] llenado por clubes: reserva ' + n0 + ' → ' + pool.length + ' fotos de ' + new Set(pool.map((x) => x.club.name)).size + ' clubes');
+  });
   return crawling;
 }
 
