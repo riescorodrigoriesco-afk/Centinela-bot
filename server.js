@@ -272,6 +272,11 @@ async function startBot() {
     c.on('interactionCreate', async (i) => {
       try {
         if (camisasMod.owns(i)) { await camisasMod.handleInteraction(i); return; }
+        if (i.isAutocomplete && i.isAutocomplete()) {
+          const ac = COMMAND_MAP.get(i.commandName);
+          if (ac && ac.autocomplete) await ac.autocomplete(i);
+          return;
+        }
         if (i.isChatInputCommand()) {
           const cmd = COMMAND_MAP.get(i.commandName);
           if (cmd) await cmd.execute(i);
@@ -636,6 +641,7 @@ process.on('uncaughtException', (e) => log('uncaughtException: ' + e.message));
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, async () => {
     await stopClient();
+    try { await require('./dbstore').flush(); } catch (_) { /* nada pendiente */ }
     process.exit(0);
   });
 }

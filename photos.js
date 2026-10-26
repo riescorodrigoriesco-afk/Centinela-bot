@@ -303,7 +303,7 @@ async function pick(gid) {
     const who = it.author ? it.author : 'autor desconocido';
     return {
       team: it.club.name, aliases: [it.club.name, ...it.club.aliases, it.club.q], not: it.club.x, year: it.year, year2: it.year2, season: it.label,
-      png: img.buf, name: 'camiseta.' + img.ext,
+      png: img.buf, name: 'camiseta.' + img.ext, url: it.url, page: it.page,
       credit: { text: who + (it.license ? ' · ' + it.license : '') + ' · ' + it.source, url: it.page || it.url },
     };
   }

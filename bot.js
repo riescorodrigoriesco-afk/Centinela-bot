@@ -48,7 +48,9 @@ function jsonStore(name, fallback) {
     timer = setTimeout(() => {
       try {
         fs.mkdirSync(DATA_DIR, { recursive: true });
-        fs.writeFileSync(file, JSON.stringify(data));
+        const text = JSON.stringify(data);
+        fs.writeFileSync(file, text);
+        try { require('./dbstore').mirror(name, text); } catch (_) { /* sin base de datos */ }
       } catch (e) {
         logErr('No se pudo guardar ' + name + ': ' + e.message);
       }
