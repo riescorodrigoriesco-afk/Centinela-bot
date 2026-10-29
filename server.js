@@ -199,11 +199,13 @@ async function registerCommands(c) {
 }
 
 const SITE_URL = process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.RENDER_EXTERNAL_URL || 'https://bot-activador-production.up.railway.app');
+// Enlace directo para añadir el bot: no lleva redirect_uri, así que nunca da «OAuth2 inválido» aunque la redirección del panel no esté registrada
+const inviteLink = (id) => 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(id) + '&scope=bot%20applications.commands&permissions=' + botMod.INVITE_PERMS;
 async function setDescription(c) {
   try {
     const rest = new REST({ version: '10' }).setToken(config.token);
     const description = '🛡️ Antiraid extremo, bienvenidas, autoroles, tickets y más. Usa /help y /guía.\nWeb y panel: ' + SITE_URL;
-    await rest.patch(Routes.currentApplication(), { body: { description, install_params: null, custom_install_url: SITE_URL + '/dashboard.html' } });
+    await rest.patch(Routes.currentApplication(), { body: { description, install_params: null, custom_install_url: inviteLink(c.user.id) } });
     // Intenta registrar la redirección OAuth2 automáticamente (si Discord no lo permite con el token del bot, se hace a mano en el Developer Portal)
     try {
       const cur = await rest.get(Routes.currentApplication());

@@ -74,7 +74,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     var aside=document.querySelector('aside');aside.style.display='none';document.querySelector('.app').style.gridTemplateColumns='1fr';
     if(oauth&&!msg&&!new URLSearchParams(location.search).get('e')){c.appendChild(el('p',{class:'sub',text:'Abriendo Discord…'}));setTimeout(function(){location.replace('/auth/login')},400)}
   }
-  var ERR={nosetup:'Primero conecta el token del bot en el panel.',denied:'Cancelaste la autorización. Pulsa de nuevo para continuar.',state:'La sesión caducó. Inténtalo otra vez.',token:'No se pudo iniciar sesión. Si Discord dice «redirect_uri inválido», añade https://bot-activador-production.up.railway.app/auth/callback en Developer Portal → OAuth2 → Redirects.'};
+  var ERR={nosetup:'Primero conecta el token del bot en el panel.',denied:'Cancelaste la autorización. Pulsa de nuevo para continuar.',state:'La sesión caducó. Inténtalo otra vez.',token:'No se pudo iniciar sesión. Si Discord dice «redirect_uri inválido» u «OAuth2 inválido», añade '+location.origin+'/auth/callback en Developer Portal → OAuth2 → Redirects.'};
   function loadGuilds(){
     api('GET','/api/me').then(function(me){
       var e=new URLSearchParams(location.search).get('e');
