@@ -76,7 +76,9 @@ Prefijo `$` (cambia con `$setprefix`) y slash `/`: `autosetup`, `config show`, `
 
 ## Panel dentro de Discord
 
-El único comando slash es `/help`: abre un menú con la tabla de comandos y funciones, **Instalar** (módulos como RaidProtect), **Ajustes** (valores y filtros por módulo), **Estado** y **Reportar**. Los comandos con prefijo siguen disponibles. Los minijuegos (`games.js`) ya no se registran como slash.
+Comandos slash extra: `/hacer` (el dueño o cualquier Administrador; guarda una copia, **borra todos los canales y roles** y construye el servidor completo según el tipo elegido, con permisos, normas, tickets, roles por botones, antiraid y el juego de camisetas) y `/setchannel` `/coleccion` `/intercambio` `/ajustes` (camisetas). Si algo queda a medias (canal o rol borrado, panel sin publicar, canal de reglas vacío…) el bot menciona al dueño con una «💡 Sugerencia».
+
+El comando principal es `/help`: abre un menú con la tabla de comandos y funciones, **Instalar** (módulos como RaidProtect), **Ajustes** (valores y filtros por módulo), **Estado** y **Reportar**. Los comandos con prefijo siguen disponibles. Los minijuegos (`games.js`) ya no se registran como slash.
 
 ## Panel web completo
 

@@ -50,7 +50,7 @@ const BASE_STAFF = {
     t('📋│registro-tickets', 'Transcripciones y registro de tickets', { staff: true, sp: 'ticketlog' }),
   ],
 };
-const TALK_BOTS = t('🤖│comandos', 'Comandos de bots y minijuegos de Centinela');
+const TALK_BOTS = t('🤖│comandos', 'Comandos de bots y minijuegos de Centinela', { sp: 'bots' });
 
 const T = {
   comunidad: {
@@ -178,6 +178,45 @@ const jobs = new Map(); // guildId -> { running, lines, done, error, tpl }
 const perm = (names) => names.map((n) => P[n]).filter(Boolean);
 const kindOf = { text: CT.GuildText, news: CT.GuildAnnouncement, voice: CT.GuildVoice };
 
+/*
+ * Borrado total (solo lo pide /hacer, ya confirmado): quita todos los canales y todos los roles que el bot pueda borrar.
+ * Nunca toca: el canal indicado en keepChannelId (se borra al final), los roles de integraciones (managed),
+ * los roles del propio bot ni los que se pidan proteger en protectRoleIds.
+ */
+async function wipeServer(g, opts, log) {
+  await g.channels.fetch().catch(() => {});
+  await g.roles.fetch().catch(() => {});
+  const res = { channels: 0, roles: 0, failedChannels: [], keptRoles: [], failedRoles: 0 };
+  const REASON = 'Centinela: /hacer';
+
+  const chans = [...g.channels.cache.values()].filter((c) => !c.isThread() && c.id !== opts.keepChannelId);
+  chans.sort((a, b) => (a.type === CT.GuildCategory) - (b.type === CT.GuildCategory)); // primero los canales, al final las categorías
+  for (const c of chans) {
+    try { await c.delete(REASON); res.channels++; } catch (e) { res.failedChannels.push({ id: c.id, name: c.name, err: e.message }); }
+  }
+  log('  🗑️ ' + res.channels + ' canales borrados' + (res.failedChannels.length ? ' (' + res.failedChannels.length + ' no se pudieron borrar todavía)' : ''));
+
+  const protect = new Set(opts.protectRoleIds || []);
+  const me = g.members.me;
+  if (me) for (const r of me.roles.cache.values()) protect.add(r.id);
+  for (const r of [...g.roles.cache.values()]) {
+    if (r.id === g.id || r.managed) continue;
+    if (protect.has(r.id)) { res.keptRoles.push(r.name); continue; }
+    if (!r.editable) { res.failedRoles++; continue; }
+    try { await r.delete(REASON); res.roles++; } catch (_) { res.failedRoles++; }
+  }
+  log('  🗑️ ' + res.roles + ' roles borrados' + (res.keptRoles.length ? ' · conservados: ' + res.keptRoles.map((n) => '@' + n).join(', ') : '') + (res.failedRoles ? ' · ' + res.failedRoles + ' por encima de mí (no puedo borrarlos)' : ''));
+
+  // Las configuraciones que apuntaban a canales/roles borrados se limpian para no dejar referencias rotas
+  const cfg = getCfg(g.id);
+  for (const k of ['reports', 'honeypot', 'verification', 'tagRole', 'logs', 'lockedChannels', 'exemptChannels', 'welcome', 'goodbye', 'tickets', 'rolePanel', 'autoRole']) delete cfg[k];
+  cfg.shirts = { ...(cfg.shirts || {}), channel: null };
+  if (cfg.levels) { cfg.levels.rewards = []; cfg.levels.activityRole = null; }
+  if (cfg.voice) cfg.voice.ignored = [];
+  getCfg(g.id); // vuelve a rellenar lo borrado con los valores por defecto
+  return res;
+}
+
 async function run(g, id, opts, job) {
   const tpl = T[id];
   const log = (s) => { job.lines.push(s); };
@@ -186,6 +225,12 @@ async function run(g, id, opts, job) {
   const roles = {};
   const specials = {};
   const created = new Set(); // ids de canales creados ahora
+
+  /* ---- borrado total (solo /hacer) ---- */
+  if (opts.wipe) {
+    log('🧹 Borrando todo lo que había…');
+    job.wipe = await wipeServer(g, opts, log);
+  }
 
   /* ---- roles ---- */
   log('👥 Creando roles…');
@@ -329,7 +374,7 @@ async function run(g, id, opts, job) {
   /* ---- antiraid y registros ---- */
   if (opts.antiraid !== false) {
     try {
-      const r = await require('./ui').webInstall(g, ['logs', 'antispam', 'nuke', 'guard', 'minage']);
+      const r = await require('./ui').webInstall(g, opts.install || ['logs', 'antispam', 'nuke', 'guard', 'minage']);
       log('🛡️ Antiraid y registros instalados.');
       void r;
     } catch (e) { log('  ❌ Antiraid: ' + e.message); }
@@ -339,6 +384,8 @@ async function run(g, id, opts, job) {
   if (opts.userId && roles.founder) {
     const m = await g.members.fetch(opts.userId).catch(() => null);
     if (m) { await m.roles.add(roles.founder, 'Centinela: plantilla').catch(() => {}); log('👑 Te di el rol @' + roles.founder.name); }
+    // Tras un borrado total, quien lo pidió también entra en el equipo de administración
+    if (m && opts.wipe && roles.admin) await m.roles.add(roles.admin, 'Centinela: /hacer').catch(() => {});
   } else if (opts.userId && roles.admin) {
     const m = await g.members.fetch(opts.userId).catch(() => null);
     if (m) await m.roles.add(roles.admin, 'Centinela: plantilla').catch(() => {});
@@ -346,8 +393,13 @@ async function run(g, id, opts, job) {
 
   saveCfg();
   log('✅ ¡Listo! Sube el rol de Centinela por encima de los demás roles para que pueda gestionarlos.');
+  return { roles, specials, created };
 }
 
+/*
+ * opts: userId, clean, antiraid, install[] (módulos de ui.js), wipe (borrado total), keepChannelId, protectRoleIds[],
+ *       after(result, job) → se ejecuta al terminar, antes de marcar el trabajo como acabado.
+ */
 function start(g, id, opts = {}) {
   if (!T[id]) throw new Error('Plantilla desconocida');
   const cur = jobs.get(g.id);
@@ -356,7 +408,10 @@ function start(g, id, opts = {}) {
   if (!me || !me.permissions.has(P.ManageChannels) || !me.permissions.has(P.ManageRoles)) throw new Error('Necesito los permisos Gestionar canales y Gestionar roles.');
   const job = { running: true, lines: ['🧩 Aplicando plantilla «' + T[id].n + '»…'], done: false, error: null, tpl: id, at: Date.now() };
   jobs.set(g.id, job);
-  run(g, id, opts, job).catch((e) => { logErr(e); job.error = e.message; job.lines.push('❌ ' + e.message); }).finally(() => { job.running = false; job.done = true; });
+  run(g, id, opts, job)
+    .then(async (result) => { if (opts.after) await opts.after(result, job); })
+    .catch((e) => { logErr(e); job.error = e.message; job.lines.push('❌ ' + e.message); })
+    .finally(() => { job.running = false; job.done = true; });
   return job;
 }
 const status = (gid) => {
@@ -364,4 +419,4 @@ const status = (gid) => {
   return j ? { running: j.running, done: j.done, error: j.error, tpl: j.tpl, lines: j.lines } : { running: false, done: false, lines: [] };
 };
 
-module.exports = { T, LIST, start, status };
+module.exports = { T, LIST, start, status, wipeServer };
