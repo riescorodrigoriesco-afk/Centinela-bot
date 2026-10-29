@@ -201,11 +201,37 @@ async function registerCommands(c) {
 const SITE_URL = process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.RENDER_EXTERNAL_URL || 'https://bot-activador-production.up.railway.app');
 // Enlace directo para añadir el bot: no lleva redirect_uri, así que nunca da «OAuth2 inválido» aunque la redirección del panel no esté registrada
 const inviteLink = (id) => 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(id) + '&scope=bot%20applications.commands&permissions=' + botMod.INVITE_PERMS;
+
+// El botón «Añadir app» del perfil del bot debe abrir la autorización normal (bot + comandos, sin redirect_uri).
+// Se prueban varias formas hasta que Discord acepte una, y cada intento queda en el registro.
+async function fixInstall(rest, id) {
+  const params = { scopes: ['bot', 'applications.commands'], permissions: String(botMod.INVITE_PERMS.bitfield) };
+  const direct = inviteLink(id);
+  const show = (a) => 'URL propia=' + (a.custom_install_url || 'ninguna') + ' · install_params=' + JSON.stringify(a.install_params || null);
+  const tries = [
+    ['enlace de Discord con permisos', { custom_install_url: null, install_params: params }],
+    ['configuración por tipo de instalación', { custom_install_url: null, integration_types_config: { 0: { oauth2_install_params: params } } }],
+    ['enlace de invitación directo', { custom_install_url: direct }],
+  ];
+  for (const [name, body] of tries) {
+    try {
+      await rest.patch(Routes.currentApplication(), { body });
+      const a = await rest.get(Routes.currentApplication());
+      const direct_ok = a.custom_install_url === direct;
+      if (direct_ok || (!a.custom_install_url && a.install_params)) { log('«Añadir app» arreglado (' + name + '): ' + show(a)); return; }
+      log('«Añadir app»: «' + name + '» no cambió nada (' + show(a) + ')');
+    } catch (e) {
+      log('«Añadir app»: «' + name + '» rechazado: ' + e.message + (e.rawError ? ' ' + JSON.stringify(e.rawError.errors || e.rawError).slice(0, 300) : ''));
+    }
+  }
+}
+
 async function setDescription(c) {
   try {
     const rest = new REST({ version: '10' }).setToken(config.token);
     const description = '🛡️ Antiraid extremo, bienvenidas, autoroles, tickets y más. Usa /help y /guía.\nWeb y panel: ' + SITE_URL;
-    await rest.patch(Routes.currentApplication(), { body: { description, install_params: null, custom_install_url: inviteLink(c.user.id) } });
+    await rest.patch(Routes.currentApplication(), { body: { description } });
+    await fixInstall(rest, c.user.id);
     // Intenta registrar la redirección OAuth2 automáticamente (si Discord no lo permite con el token del bot, se hace a mano en el Developer Portal)
     try {
       const cur = await rest.get(Routes.currentApplication());
