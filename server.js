@@ -227,12 +227,23 @@ async function fixInstall(rest, id) {
   }
 }
 
+// Si el bot es privado o exige «code grant», solo su dueño (o nadie) puede añadirlo: se deja dicho en el registro
+async function checkPublic(rest) {
+  try {
+    const a = await rest.get(Routes.currentApplication());
+    log('Quién puede añadir el bot: ' + (a.bot_public === false ? '⚠️ SOLO su dueño (el bot es privado: Developer Portal → Bot → activa «Public Bot»)' : 'cualquiera con el enlace') + (a.bot_require_code_grant ? ' · ⚠️ «Requires OAuth2 Code Grant» está activado (Developer Portal → Bot): desactívalo o no se podrá añadir' : ''));
+  } catch (e) {
+    log('No se pudo comprobar si el bot es público: ' + e.message);
+  }
+}
+
 async function setDescription(c) {
   try {
     const rest = new REST({ version: '10' }).setToken(config.token);
     const description = '🛡️ Antiraid extremo, bienvenidas, autoroles, tickets y más. Usa /help y /guía.\nWeb y panel: ' + SITE_URL;
     await rest.patch(Routes.currentApplication(), { body: { description } });
     await fixInstall(rest, c.user.id);
+    await checkPublic(rest);
     // Intenta registrar la redirección OAuth2 automáticamente (si Discord no lo permite con el token del bot, se hace a mano en el Developer Portal)
     try {
       const cur = await rest.get(Routes.currentApplication());
@@ -642,8 +653,9 @@ app.get('/api/guilds', dashAuth, (req, res) => {
   const present = online ? client.guilds.cache.filter((g) => req.sess.admin || req.sess.guilds.has(g.id)) : [];
   const guilds = online ? present.map((g) => ({ id: g.id, name: g.name, icon: g.iconURL({ size: 64 }), members: g.memberCount })) : [];
   const have = new Set(guilds.map((g) => g.id));
-  const available = !req.sess.admin && config.id ? (req.sess.manageList || []).filter((g) => !have.has(g.id)).map((g) => ({ id: g.id, name: g.name, invite: inv(g.id) })) : [];
-  res.json({ online, guilds, available });
+  // Los servidores donde puedes administrar y Centinela aún no está: también para el dueño del bot (antes solo salían a los demás)
+  const available = config.id ? (req.sess.manageList || []).filter((g) => !have.has(g.id)).map((g) => ({ id: g.id, name: g.name, invite: inv(g.id) })) : [];
+  res.json({ online, guilds, available, invite: config.id ? inviteLink(config.id) : null });
 });
 app.get('/api/guild/:id', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(uiMod.webGuild(g)); }));
 app.post('/api/guild/:id/mod/:mod', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webApply(g, req.params.mod, req.body || {})); }));

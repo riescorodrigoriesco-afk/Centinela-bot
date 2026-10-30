@@ -95,6 +95,8 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     var m=$('#main');m.innerHTML='';
     var top=el('div',{class:'row',style:'justify-content:space-between;margin-bottom:18px'},[el('div',{},[el('h1',{text:'Tus servidores'}),el('p',{class:'sub',text:'Elige uno para configurarlo o añade a Centinela.'})]),el('div',{id:'who2'})]);
     m.appendChild(top);
+    var known=r.guilds.map(function(g){return g.id});
+    if(r.invite)m.appendChild(el('p',{},[el('a',{class:'btn',href:r.invite,target:'_blank',rel:'noopener',text:'➕ Añadir Centinela a un servidor',on:{click:function(){waitNew(known)}}})]));
     if(!r.online)m.appendChild(el('p',{class:'err',text:'El bot no está en línea ahora mismo.'}));
     var grid=el('div',{class:'grid'});
     r.guilds.forEach(function(g){
@@ -108,6 +110,15 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     if(!r.guilds.length&&!(r.available||[]).length)m.appendChild(el('p',{class:'sub',text:'No encontramos servidores donde tengas permiso de administrar. Crea uno o pide que te den el permiso «Gestionar servidor».'}));
     m.appendChild(grid);
     api('GET','/api/me').then(function(me){var w=$('#who2');if(!w)return;w.appendChild(el('span',{class:'sub',text:me.name+'  '}));w.appendChild(el('a',{href:'/auth/logout',text:'Cerrar sesión'}))});
+  }
+  function waitNew(known){
+    var n=0;clearInterval(pollT);toast('Cuando termines de añadir el bot, aparecerá aquí.');
+    pollT=setInterval(function(){
+      if(++n>45){clearInterval(pollT);return}
+      api('GET','/api/guilds').then(function(r){
+        if(r.guilds.some(function(g){return known.indexOf(g.id)<0})){clearInterval(pollT);pickerView(r)}
+      }).catch(function(){});
+    },4000);
   }
   function waitFor(gid){
     var n=0;clearInterval(pollT);toast('Cuando termines de añadir el bot, te llevo a configurarlo.');
