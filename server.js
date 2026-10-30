@@ -15,9 +15,10 @@ const camisasMod = require('./camisas');
 const tplMod = require('./templates');
 const hacerMod = require('./hacer');
 const sugMod = require('./sugerencias');
+const mensajesMod = require('./mensajes');
 
-// Comandos slash: /help, /guía, /putbot, /setidioma, las camisetas y /hacer. El resto se maneja con menús, botones y el prefijo.
-const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands, ...camisasMod.commands, ...hacerMod.commands];
+// Comandos slash: /help, /guía, /putbot, /setidioma, las camisetas, /hacer y /enviarmensaje. El resto se maneja con menús, botones y el prefijo.
+const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands, ...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands];
 const COMMAND_MAP = new Map(ALL_COMMANDS.map((c) => [c.data.name, c]));
 
 const FULL_INTENTS = [
@@ -186,7 +187,7 @@ async function registerCommands(c) {
   }
   // Un comando con formato inválido no debe tumbar a los demás: se registran primero los básicos y luego uno a uno los extra
   try {
-    const extra = [...camisasMod.commands, ...hacerMod.commands];
+    const extra = [...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands];
     const base = ALL_COMMANDS.filter((x) => !extra.includes(x));
     await rest.put(Routes.applicationCommands(c.user.id), { body: base.map((x) => x.data.toJSON()) });
     log('Comandos básicos registrados (' + base.length + ')');
@@ -305,6 +306,7 @@ async function startBot() {
       try {
         if (camisasMod.owns(i)) { await camisasMod.handleInteraction(i); return; }
         if (hacerMod.owns(i)) { await hacerMod.handleComponent(i); return; }
+        if (mensajesMod.owns(i)) { await mensajesMod.handle(i); return; }
         if (i.isAutocomplete && i.isAutocomplete()) {
           const ac = COMMAND_MAP.get(i.commandName);
           if (ac && ac.autocomplete) await ac.autocomplete(i);
