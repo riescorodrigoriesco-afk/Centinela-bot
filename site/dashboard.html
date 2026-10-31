@@ -97,6 +97,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     m.appendChild(top);
     var known=r.guilds.map(function(g){return g.id});
     if(r.invite)m.appendChild(el('p',{},[el('a',{class:'btn',href:r.invite,target:'_blank',rel:'noopener',text:'➕ Añadir Centinela a un servidor',on:{click:function(){waitNew(known)}}})]));
+    if(r.userInvite)m.appendChild(el('div',{class:'card',style:'margin-bottom:16px'},[el('h3',{text:'📲 Centinela como app externa (solo tú)'}),el('p',{class:'sub',style:'font-size:.9rem',text:'Instálalo en tu cuenta y podrás usar /enviarmensaje en CUALQUIER servidor o chat, aunque el bot no esté dentro. Ahí no puede escribir por MD a los miembros (Discord no lo permite): publica el mensaje en el canal donde lo uses. Dentro de tus servidores sigue mandando el MD a todos.'}),el('a',{class:'btn sec',href:r.userInvite,target:'_blank',rel:'noopener',text:'📲 Instalar en mi cuenta'})]));
     if(!r.online)m.appendChild(el('p',{class:'err',text:'El bot no está en línea ahora mismo.'}));
     var grid=el('div',{class:'grid'});
     r.guilds.forEach(function(g){

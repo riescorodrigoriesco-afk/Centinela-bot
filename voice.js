@@ -577,4 +577,4 @@ function attach(client) {
   });
 }
 
-module.exports = { commands: [putbot, setidioma], handleComponent, mods, leave, attach };
+module.exports = { commands: [putbot, setidioma], handleComponent, mods, leave, attach, isOwner };

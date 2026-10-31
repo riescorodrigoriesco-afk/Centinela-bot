@@ -175,9 +175,34 @@ function applyPresence() {
   }
 }
 
+// «App externa»: deja que el comando /enviarmensaje se instale en la cuenta del creador y se use en cualquier servidor, aunque el bot no esté dentro.
+// Solo AÑADE el tipo de instalación «usuario» a lo que ya hay (no toca el tipo servidor ni el enlace de «Añadir app»).
+async function enableUserInstall(rest) {
+  try {
+    const a = await rest.get(Routes.currentApplication());
+    const cur = a.integration_types_config || {};
+    if (cur['1']) { log('App externa (instalación en la cuenta): ya activada'); return true; }
+    log('App externa: tipos de instalación actuales = ' + (Object.keys(cur).join(',') || 'ninguno') + ' → añado «usuario»');
+    await rest.patch(Routes.currentApplication(), { body: { integration_types_config: { 0: cur['0'] || {}, 1: {} } } });
+    const chk = await rest.get(Routes.currentApplication());
+    const on = !!(chk.integration_types_config && chk.integration_types_config['1']);
+    log(on ? 'App externa activada: ahora se puede instalar en tu cuenta' : '⚠️ App externa: Discord no cambió nada. Actívala a mano: Developer Portal → Installation → Install Contexts → marca «User Install»');
+    // El enlace del botón «Añadir app» debe quedar igual que estaba
+    if (a.custom_install_url && chk.custom_install_url !== a.custom_install_url) {
+      await rest.patch(Routes.currentApplication(), { body: { custom_install_url: a.custom_install_url } }).catch(() => {});
+      log('«Añadir app»: enlace restaurado');
+    }
+    return on;
+  } catch (e) {
+    log('⚠️ App externa: no pude activarla sola (' + e.message + (e.rawError ? ' ' + JSON.stringify(e.rawError.errors || e.rawError).slice(0, 300) : '') + '). Hazlo a mano: Developer Portal → Installation → Install Contexts → marca «User Install»');
+    return false;
+  }
+}
+
 async function registerCommands(c) {
   const rest = new REST({ version: '10' }).setToken(config.token);
   const detail = (e) => e.message + (e.rawError ? ' ' + JSON.stringify(e.rawError.errors || e.rawError).slice(0, 600) : '');
+  await enableUserInstall(rest);
   try {
     await rest.put(Routes.applicationCommands(c.user.id), { body: ALL_COMMANDS.map((x) => x.data.toJSON()) });
     log('Comandos slash registrados (' + ALL_COMMANDS.length + '): ' + ALL_COMMANDS.map((x) => '/' + x.data.name).join(' '));
@@ -192,7 +217,15 @@ async function registerCommands(c) {
     await rest.put(Routes.applicationCommands(c.user.id), { body: base.map((x) => x.data.toJSON()) });
     log('Comandos básicos registrados (' + base.length + ')');
     for (const x of extra) {
-      try { await rest.post(Routes.applicationCommands(c.user.id), { body: x.data.toJSON() }); log('Registrado /' + x.data.name); } catch (e) { log('⚠️ Discord rechaza /' + x.data.name + ': ' + detail(e)); }
+      try { await rest.post(Routes.applicationCommands(c.user.id), { body: x.data.toJSON() }); log('Registrado /' + x.data.name); } catch (e) {
+        log('⚠️ Discord rechaza /' + x.data.name + ': ' + detail(e));
+        // Sin la instalación externa el comando sigue sirviendo dentro de los servidores donde está el bot
+        const j = x.data.toJSON();
+        if (j.integration_types || j.contexts) {
+          delete j.integration_types; delete j.contexts; j.dm_permission = false;
+          try { await rest.post(Routes.applicationCommands(c.user.id), { body: j }); log('Registrado /' + x.data.name + ' (solo en servidores, sin modo externo)'); } catch (e2) { log('⚠️ Tampoco así: ' + detail(e2)); }
+        }
+      }
     }
   } catch (e) {
     log('Tampoco se pudieron registrar los comandos básicos: ' + detail(e));
@@ -202,6 +235,8 @@ async function registerCommands(c) {
 const SITE_URL = process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.RENDER_EXTERNAL_URL || 'https://bot-activador-production.up.railway.app');
 // Enlace directo para añadir el bot: no lleva redirect_uri, así que nunca da «OAuth2 inválido» aunque la redirección del panel no esté registrada
 const inviteLink = (id) => 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(id) + '&scope=bot%20applications.commands&permissions=' + botMod.INVITE_PERMS;
+// Instalar el bot como «app» de la cuenta del usuario (sirve en cualquier servidor, chat de grupo o MD; no hace falta que el bot esté en el servidor)
+const userInviteLink = (id) => 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(id) + '&integration_type=1&scope=applications.commands';
 
 // El botón «Añadir app» del perfil del bot debe abrir la autorización normal (bot + comandos, sin redirect_uri).
 // Se prueban varias formas hasta que Discord acepte una, y cada intento queda en el registro.
@@ -655,7 +690,7 @@ app.get('/api/guilds', dashAuth, (req, res) => {
   const have = new Set(guilds.map((g) => g.id));
   // Los servidores donde puedes administrar y Centinela aún no está: también para el dueño del bot (antes solo salían a los demás)
   const available = config.id ? (req.sess.manageList || []).filter((g) => !have.has(g.id)).map((g) => ({ id: g.id, name: g.name, invite: inv(g.id) })) : [];
-  res.json({ online, guilds, available, invite: config.id ? inviteLink(config.id) : null });
+  res.json({ online, guilds, available, invite: config.id ? inviteLink(config.id) : null, userInvite: config.id && req.sess.admin ? userInviteLink(config.id) : null });
 });
 app.get('/api/guild/:id', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(uiMod.webGuild(g)); }));
 app.post('/api/guild/:id/mod/:mod', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webApply(g, req.params.mod, req.body || {})); }));

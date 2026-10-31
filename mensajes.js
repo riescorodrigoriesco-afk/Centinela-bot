@@ -14,6 +14,10 @@
  * · Cada mensaje dice de qué servidor viene y lleva «No recibir más»: quien lo pulsa no vuelve a recibir envíos masivos de ese servidor.
  * · Si se repite el mismo mensaje (por ejemplo tras un reinicio) se salta a quien ya lo recibió.
  * · Deja constancia en los registros del servidor y avisa por MD de cómo terminó.
+ *
+ * MODO EXTERNO: el comando también se puede instalar en la cuenta del creador del bot («app de usuario») y usarse en CUALQUIER
+ * servidor, chat de grupo o MD, aunque el bot no esté dentro. Ahí Discord no deja al bot ver los miembros ni escribirles por MD,
+ * así que el mensaje (con formato, enlaces y botón) se publica en el canal donde se usa el comando. Solo lo puede usar el creador del bot.
  */
 
 const crypto = require('crypto');
@@ -143,29 +147,109 @@ function progressView(g, job, final) {
 }
 
 /* ============================ comando ============================ */
+const data = new SlashCommandBuilder()
+  .setName('enviarmensaje')
+  .setDescription('Write a message: DM it to every member, or post it in any server or chat even without the bot')
+  .setDescriptionLocalizations(es2('Escribe un mensaje: MD a todos los miembros o publícalo en cualquier servidor aunque no esté el bot'));
+// Se puede instalar en la cuenta del usuario y usar en servidores, chats de grupo y MD (los permisos se comprueban al ejecutar)
+{
+  const json = data.toJSON.bind(data);
+  data.toJSON = () => { const j = json(); delete j.dm_permission; delete j.default_member_permissions; return { ...j, integration_types: [0, 1], contexts: [0, 1, 2] }; };
+}
+
+let ownerFn = null;
+async function ownerOf(i) {
+  try { return !!(await (ownerFn || (ownerFn = require('./voice').isOwner))(i.client, i.user.id)); } catch (e) { logErr(e); return false; }
+}
+
+function dmModal(i, lc) {
+  return new ModalBuilder().setCustomId('enviar:modal').setTitle(L(lc, 'Message to every member', 'Mensaje para todos los miembros'))
+    .addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('titulo').setLabel(L(lc, 'Title (optional)', 'Título (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('texto').setLabel(L(lc, 'Message (links and **bold** work)', 'Mensaje (valen enlaces y **negrita**)')).setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000).setPlaceholder(L(lc, 'Hi {user}! Join our event: [click here](https://example.com)', '¡Hola {user}! Únete a nuestro evento: [pulsa aquí](https://ejemplo.com)'))),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('boton').setLabel(L(lc, 'Link button (optional)', 'Botón con enlace (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300).setPlaceholder(L(lc, 'Text | https://link   e.g. Join | https://discord.gg/...', 'Texto | https://enlace   ej. Unirme | https://discord.gg/...')))
+    );
+}
+
 const command = {
-  data: new SlashCommandBuilder()
-    .setName('enviarmensaje')
-    .setDescription('Write a message and send it by DM to every member of the server (links and formatting allowed)')
-    .setDescriptionLocalizations(es2('Escribe un mensaje y envíalo por MD a todos los miembros del servidor (admite enlaces y formato)'))
-    .setDMPermission(false)
-    .setDefaultMemberPermissions(P.Administrator),
+  data,
   async execute(i) {
     const g = i.guild;
-    if (!g) return;
-    const lc = g.preferredLocale;
-    if (!isAdmin(i.member, g)) return i.reply({ content: L(lc, '❌ You need the **Administrator** permission.', '❌ Necesitas el permiso de **Administrador**.'), flags: EPH });
-    const cur = jobs.get(g.id);
-    if (cur && cur.running) return i.reply({ content: '⏳ ' + L(lc, 'A message is already being sent: ', 'Ya hay un envío en marcha: ') + (cur.sent + cur.closed + cur.failed) + '/' + cur.total + '.', flags: EPH });
-    const modal = new ModalBuilder().setCustomId('enviar:modal').setTitle(L(lc, 'Message to every member', 'Mensaje para todos los miembros'))
-      .addComponents(
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('titulo').setLabel(L(lc, 'Title (optional)', 'Título (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100)),
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('texto').setLabel(L(lc, 'Message (links and **bold** work)', 'Mensaje (valen enlaces y **negrita**)')).setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000).setPlaceholder(L(lc, 'Hi {user}! Join our event: [click here](https://example.com)', '¡Hola {user}! Únete a nuestro evento: [pulsa aquí](https://ejemplo.com)'))),
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('boton').setLabel(L(lc, 'Link button (optional)', 'Botón con enlace (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300).setPlaceholder(L(lc, 'Text | https://link   e.g. Join | https://discord.gg/...', 'Texto | https://enlace   ej. Unirme | https://discord.gg/...')))
-      );
-    return i.showModal(modal);
+    const lc = (g && g.preferredLocale) || i.locale;
+    // 1) Servidor donde está el bot y quien lo usa es administrador: MD a todos los miembros
+    if (g && isAdmin(i.member, g)) {
+      const cur = jobs.get(g.id);
+      if (cur && cur.running) return i.reply({ content: '⏳ ' + L(lc, 'A message is already being sent: ', 'Ya hay un envío en marcha: ') + (cur.sent + cur.closed + cur.failed) + '/' + cur.total + '.', flags: EPH });
+      return i.showModal(dmModal(i, lc));
+    }
+    // 2) El creador del bot, en cualquier otro sitio (servidor sin el bot, chat de grupo, MD…): publicar en este canal
+    if (await ownerOf(i)) return i.showModal(extModal(lc));
+    return i.reply({
+      content: g
+        ? L(lc, '❌ You need the **Administrator** permission.', '❌ Necesitas el permiso de **Administrador**.')
+        : '❌ ' + L(lc, 'The bot is not in this server, so it cannot DM its members. Only the bot creator can use this command here (it posts the message in this channel).', 'El bot no está en este servidor, así que no puede escribir por MD a sus miembros. Aquí solo lo puede usar el creador del bot (publica el mensaje en este canal).'),
+      flags: EPH,
+    });
   },
 };
+
+/* ============================ modo externo (publicar en el canal) ============================ */
+function extModal(lc) {
+  return new ModalBuilder().setCustomId('enviar:xmodal').setTitle(L(lc, 'Message for this chat', 'Mensaje para este chat'))
+    .addComponents(
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('titulo').setLabel(L(lc, 'Title (optional)', 'Título (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100)),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('texto').setLabel(L(lc, 'Message (links and **bold** work)', 'Mensaje (valen enlaces y **negrita**)')).setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000).setPlaceholder(L(lc, 'Join our event: [click here](https://example.com)', 'Únete a nuestro evento: [pulsa aquí](https://ejemplo.com)'))),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('boton').setLabel(L(lc, 'Link button (optional)', 'Botón con enlace (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300).setPlaceholder(L(lc, 'Text | https://link   e.g. Join | https://discord.gg/...', 'Texto | https://enlace   ej. Unirme | https://discord.gg/...')))
+    );
+}
+
+// Lo que se publica en el canal: el mismo estilo que los MD, con quien lo escribe como autor
+function buildExternal(user, m) {
+  const e = new EmbedBuilder().setColor(COLOR.blue).setDescription(clip(m.text, 4096)).setTimestamp();
+  if (m.title) e.setTitle(clip(m.title, 256));
+  const icon = typeof user.displayAvatarURL === 'function' ? user.displayAvatarURL({ size: 64 }) : null;
+  const name = user.globalName || user.username || 'Mensaje';
+  e.setAuthor(icon ? { name, iconURL: icon } : { name });
+  const out = { embeds: [e], components: [] };
+  if (m.btn) out.components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(m.btn.label).setURL(m.btn.url)));
+  return out;
+}
+
+async function external(i) {
+  const id = String(i.customId);
+  const lc = i.locale;
+  if (!(await ownerOf(i))) return i.reply({ content: '❌ ' + L(lc, 'Only the bot creator can use this here.', 'Aquí solo lo puede usar el creador del bot.'), flags: EPH });
+  if (id === 'enviar:xmodal' && i.isModalSubmit && i.isModalSubmit()) {
+    const text = String(i.fields.getTextInputValue('texto') || '').trim();
+    const title = String(i.fields.getTextInputValue('titulo') || '').trim();
+    const btn = parseButton(i.fields.getTextInputValue('boton'));
+    if (!text) return i.reply({ content: L(lc, '❌ The message is empty.', '❌ El mensaje está vacío.'), flags: EPH });
+    if (btn === false) return i.reply({ content: '❌ ' + L(lc, 'The button link is not valid. Use `Text | https://link` (it must start with https://).', 'El enlace del botón no es válido. Usa `Texto | https://enlace` (debe empezar por https://).'), flags: EPH });
+    const p = { ext: true, uid: i.user.id, title, text, btn, exp: Date.now() + T.pendingTtl };
+    const key = crypto.randomBytes(5).toString('hex');
+    pending.set(key, p);
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('enviar:xgo:' + key).setLabel(L(lc, 'Post it here', 'Publicar aquí')).setEmoji('📤').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('enviar:xno:' + key).setLabel(L(lc, 'Cancel', 'Cancelar')).setStyle(ButtonStyle.Secondary)
+    );
+    return i.reply({ content: '📤 ' + L(lc, '**Preview** — this is how it will look. Press the button to post it in this chat.', '**Vista previa** — así quedará. Pulsa el botón para publicarlo en este chat.'), embeds: buildExternal(i.user, p).embeds, components: [row], flags: EPH });
+  }
+  const [, act, key] = id.split(':');
+  const p = pending.get(key);
+  if (!p || !p.ext || p.exp < Date.now()) { pending.delete(key); return i.update({ content: '⌛ ' + L(lc, 'That draft expired. Use /enviarmensaje again.', 'Ese borrador caducó. Usa /enviarmensaje otra vez.'), embeds: [], components: [] }); }
+  if (i.user.id !== p.uid) return i.reply({ content: L(lc, '❌ Only who wrote it can post it.', '❌ Solo quien lo escribió puede publicarlo.'), flags: EPH });
+  if (act === 'xno') { pending.delete(key); return i.update({ content: '❌ ' + L(lc, 'Cancelled. Nothing was posted.', 'Cancelado. No se publicó nada.'), embeds: [], components: [] }); }
+  if (act === 'xgo') {
+    pending.delete(key);
+    try {
+      await i.reply({ ...buildExternal(i.user, p), allowedMentions: { parse: [] } });
+      console.log('[mensajes] externo: publicado en ' + (i.guildId ? 'servidor ' + i.guildId : 'chat privado') + ' por ' + i.user.id);
+    } catch (e) {
+      logErr(e);
+      return i.reply({ content: '❌ ' + L(lc, "I couldn't post it here: ", 'No pude publicarlo aquí: ') + String(e.message || e).slice(0, 200), flags: EPH }).catch(() => {});
+    }
+  }
+}
 
 /* ============================ interacciones ============================ */
 const owns = (i) => !!(i.customId && String(i.customId).startsWith('enviar:'));
@@ -173,6 +257,7 @@ const owns = (i) => !!(i.customId && String(i.customId).startsWith('enviar:'));
 async function handle(i) {
   const id = String(i.customId);
   if (id.startsWith('enviar:out:')) return optOut(i);
+  if (id.startsWith('enviar:x')) return external(i);
   const g = i.guild;
   if (!g) return;
   if (id === 'enviar:modal' && i.isModalSubmit && i.isModalSubmit()) return onModal(i);
@@ -304,4 +389,4 @@ async function run(g, p, list, job) {
   store.save();
 }
 
-module.exports = { commands: [command], handle, owns, parseButton, build, _t: T, _jobs: jobs, _store: store };
+module.exports = { commands: [command], handle, owns, parseButton, build, buildExternal, _t: T, _jobs: jobs, _store: store, _setOwnerFn: (f) => { ownerFn = f; } };
