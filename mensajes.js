@@ -6,12 +6,14 @@
  * Flujo: /enviarmensaje → cuadro con título (opcional), mensaje y botón con enlace (opcional)
  *        → vista previa exacta + cuántos lo recibirán → «Enviar a todos» (o «Enviarme una prueba»).
  *
- * · El mensaje admite el formato de Discord (negrita, listas, citas…) y enlaces de todo tipo: https://…, [texto](https://…)
- *   y un botón con enlace. Variables: {user} (menciona a quien lo recibe), {username} y {server}.
+ * · Llega como un MENSAJE NORMAL (texto, sin recuadro/embed) que empieza con el nombre del servidor en negrita. Admite el formato
+ *   de Discord (negrita, listas, citas…) y enlaces de todo tipo: https://…, [texto](https://…) y un botón con enlace opcional.
+ *   Variables: {user} (menciona a quien lo recibe), {username} y {server}. Un mensaje normal admite hasta 2000 caracteres.
+ *   (Discord enseña siempre el perfil del propio bot en los MD: no se puede cambiar su foto ni su nombre por servidor.)
  * · Lo puede lanzar el dueño o un Administrador.
  * · Va despacio a propósito (≈2 s por persona) y se frena solo si Discord lo pide: los envíos masivos rápidos
  *   hacen que Discord marque al bot. Un servidor grande tarda; el progreso se ve en vivo y se puede parar.
- * · Cada mensaje dice de qué servidor viene y lleva «No recibir más»: quien lo pulsa no vuelve a recibir envíos masivos de ese servidor.
+ * · Quien pulsó «No recibir más» en envíos anteriores (el botón ya no se añade) sigue sin recibirlos.
  * · Si se repite el mismo mensaje (por ejemplo tras un reinicio) se salta a quien ya lo recibió.
  * · Deja constancia en los registros del servidor y avisa por MD de cómo terminó.
  *
@@ -68,22 +70,19 @@ function colorOf(g) {
   return /^[0-9a-f]{6}$/i.test(hex) ? parseInt(hex, 16) : COLOR.blue;
 }
 
-// Lo que recibe cada persona (target = su miembro; en la vista previa, quien lo escribe)
+// Nombre sin signos que rompan el formato de Discord
+const plain = (x) => String(x || '').replace(/[*_~`|>\\]/g, '').trim();
+const TEXT_MAX = 1700; // un mensaje normal admite 2000 caracteres: nombre del servidor + título + texto
+
+// Lo que recibe cada persona: un mensaje normal (target = su miembro; en la vista previa, quien lo escribe)
 function build(g, m, target) {
-  const lc = g.preferredLocale;
   const vars = { user: target ? '<@' + target.id + '>' : '', username: target && target.user ? target.user.username : '', server: g.name };
-  const e = new EmbedBuilder()
-    .setColor(colorOf(g))
-    .setDescription(clip(fmt(m.text, vars), 4096))
-    .setFooter({ text: L(lc, 'Message from the team of ', 'Mensaje del equipo de ') + g.name })
-    .setTimestamp();
-  if (m.title) e.setTitle(clip(fmt(m.title, vars), 256));
-  const icon = typeof g.iconURL === 'function' ? g.iconURL({ size: 64 }) : null;
-  e.setAuthor(icon ? { name: g.name, iconURL: icon } : { name: g.name });
-  const row = new ActionRowBuilder();
-  if (m.btn) row.addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(m.btn.label).setURL(m.btn.url));
-  row.addComponents(new ButtonBuilder().setCustomId('enviar:out:' + g.id).setLabel(L(lc, 'Stop receiving these', 'No recibir más')).setEmoji('🔕').setStyle(ButtonStyle.Secondary));
-  return { embeds: [e], components: [row] };
+  const parts = ['📨 **' + clip(plain(g.name) || 'Servidor', 100) + '**'];
+  if (m.title) parts.push('**' + clip(plain(fmt(m.title, vars)), 100) + '**');
+  parts.push('', fmt(m.text, vars));
+  const out = { content: clip(parts.join('\n'), 2000), components: [], allowedMentions: { parse: [] } };
+  if (m.btn) out.components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(m.btn.label).setURL(m.btn.url)));
+  return out;
 }
 
 /* ============================ destinatarios ============================ */
@@ -107,7 +106,7 @@ const minutes = (n) => Math.max(1, Math.ceil((n * (T.delay + T.jitter / 2)) / 60
 function previewView(g, p, id, info, complete) {
   const lc = g.preferredLocale;
   const note =
-    '📨 ' + L(lc, '**Preview** — this is exactly what each member will get by DM.', '**Vista previa** — así lo recibirá cada miembro por MD.') + '\n' +
+    '📨 ' + L(lc, '**Preview** — the message above is exactly what each member will get by DM (a normal message).', '**Vista previa** — el mensaje de arriba es exactamente lo que recibirá cada miembro por MD (un mensaje normal).') + '\n' +
     L(lc, 'It will go to **' + info.list.length + '** members', 'Se enviará a **' + info.list.length + '** miembros') +
     (info.list.length ? ' (≈ ' + minutes(info.list.length) + ' min)' : '') + '.' +
     (info.already ? '\n↩️ ' + L(lc, info.already + ' already got this exact message and are skipped.', info.already + ' ya recibieron este mismo mensaje y se saltan.') : '') +
@@ -119,8 +118,8 @@ function previewView(g, p, id, info, complete) {
     new ButtonBuilder().setCustomId('enviar:no:' + id).setLabel(L(lc, 'Cancel', 'Cancelar')).setStyle(ButtonStyle.Secondary)
   );
   const pv = build(g, p, g.members.cache.get(p.uid));
-  // La vista previa no lleva el botón «No recibir más» real (es solo una imagen de cómo queda)
-  return { content: note, embeds: pv.embeds, components: [row] };
+  // El mensaje va tal cual (como lo verán); los datos del envío, en un recuadro aparte que solo ves tú
+  return { content: pv.content, embeds: [new EmbedBuilder().setColor(COLOR.blue).setDescription(note)], components: [row, ...pv.components], allowedMentions: { parse: [] } };
 }
 
 function bar(done, total) {
@@ -166,7 +165,7 @@ function dmModal(i, lc) {
   return new ModalBuilder().setCustomId('enviar:modal').setTitle(L(lc, 'Message to every member', 'Mensaje para todos los miembros'))
     .addComponents(
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('titulo').setLabel(L(lc, 'Title (optional)', 'Título (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100)),
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('texto').setLabel(L(lc, 'Message (links and **bold** work)', 'Mensaje (valen enlaces y **negrita**)')).setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000).setPlaceholder(L(lc, 'Hi {user}! Join our event: [click here](https://example.com)', '¡Hola {user}! Únete a nuestro evento: [pulsa aquí](https://ejemplo.com)'))),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('texto').setLabel(L(lc, 'Message (links and **bold** work)', 'Mensaje (valen enlaces y **negrita**)')).setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(TEXT_MAX).setPlaceholder(L(lc, 'Hi {user}! Join our event: [click here](https://example.com)', '¡Hola {user}! Únete a nuestro evento: [pulsa aquí](https://ejemplo.com)'))),
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('boton').setLabel(L(lc, 'Link button (optional)', 'Botón con enlace (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300).setPlaceholder(L(lc, 'Text | https://link   e.g. Join | https://discord.gg/...', 'Texto | https://enlace   ej. Unirme | https://discord.gg/...')))
     );
 }
@@ -198,19 +197,15 @@ function extModal(lc) {
   return new ModalBuilder().setCustomId('enviar:xmodal').setTitle(L(lc, 'Message for this chat', 'Mensaje para este chat'))
     .addComponents(
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('titulo').setLabel(L(lc, 'Title (optional)', 'Título (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(100)),
-      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('texto').setLabel(L(lc, 'Message (links and **bold** work)', 'Mensaje (valen enlaces y **negrita**)')).setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000).setPlaceholder(L(lc, 'Join our event: [click here](https://example.com)', 'Únete a nuestro evento: [pulsa aquí](https://ejemplo.com)'))),
+      new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('texto').setLabel(L(lc, 'Message (links and **bold** work)', 'Mensaje (valen enlaces y **negrita**)')).setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1850).setPlaceholder(L(lc, 'Join our event: [click here](https://example.com)', 'Únete a nuestro evento: [pulsa aquí](https://ejemplo.com)'))),
       new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('boton').setLabel(L(lc, 'Link button (optional)', 'Botón con enlace (opcional)')).setStyle(TextInputStyle.Short).setRequired(false).setMaxLength(300).setPlaceholder(L(lc, 'Text | https://link   e.g. Join | https://discord.gg/...', 'Texto | https://enlace   ej. Unirme | https://discord.gg/...')))
     );
 }
 
-// Lo que se publica en el canal: el mismo estilo que los MD, con quien lo escribe como autor
+// Lo que se publica en el canal: un mensaje normal (título en negrita + texto), sin recuadro
 function buildExternal(user, m) {
-  const e = new EmbedBuilder().setColor(COLOR.blue).setDescription(clip(m.text, 4096)).setTimestamp();
-  if (m.title) e.setTitle(clip(m.title, 256));
-  const icon = typeof user.displayAvatarURL === 'function' ? user.displayAvatarURL({ size: 64 }) : null;
-  const name = user.globalName || user.username || 'Mensaje';
-  e.setAuthor(icon ? { name, iconURL: icon } : { name });
-  const out = { embeds: [e], components: [] };
+  void user;
+  const out = { content: clip((m.title ? '**' + clip(plain(m.title), 100) + '**\n\n' : '') + m.text, 2000), components: [], allowedMentions: { parse: [] } };
   if (m.btn) out.components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(m.btn.label).setURL(m.btn.url)));
   return out;
 }
@@ -232,7 +227,8 @@ async function external(i) {
       new ButtonBuilder().setCustomId('enviar:xgo:' + key).setLabel(L(lc, 'Post it here', 'Publicar aquí')).setEmoji('📤').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId('enviar:xno:' + key).setLabel(L(lc, 'Cancel', 'Cancelar')).setStyle(ButtonStyle.Secondary)
     );
-    return i.reply({ content: '📤 ' + L(lc, '**Preview** — this is how it will look. Press the button to post it in this chat.', '**Vista previa** — así quedará. Pulsa el botón para publicarlo en este chat.'), embeds: buildExternal(i.user, p).embeds, components: [row], flags: EPH });
+    const pv = buildExternal(i.user, p);
+    return i.reply({ content: pv.content, embeds: [new EmbedBuilder().setColor(COLOR.blue).setDescription('📤 ' + L(lc, '**Preview** — the message above is how it will look. Press the button to post it in this chat.', '**Vista previa** — el mensaje de arriba es como quedará. Pulsa el botón para publicarlo en este chat.'))], components: [row, ...pv.components], allowedMentions: { parse: [] }, flags: EPH });
   }
   const [, act, key] = id.split(':');
   const p = pending.get(key);
@@ -242,7 +238,7 @@ async function external(i) {
   if (act === 'xgo') {
     pending.delete(key);
     try {
-      await i.reply({ ...buildExternal(i.user, p), allowedMentions: { parse: [] } });
+      await i.reply(buildExternal(i.user, p));
       console.log('[mensajes] externo: publicado en ' + (i.guildId ? 'servidor ' + i.guildId : 'chat privado') + ' por ' + i.user.id);
     } catch (e) {
       logErr(e);
