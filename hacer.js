@@ -154,6 +154,7 @@ async function perform(i, id) {
   const x = tpl.T[id];
   if (running.has(g.id) || tpl.status(g.id).running) { await i.update({ content: L(lc, '⏳ The server is already being built.', '⏳ Ya se está haciendo el servidor.'), embeds: [], components: [] }); return; }
   running.add(g.id);
+  console.log('[hacer] ' + g.name + ' (' + g.id + '): «' + id + '» pedido por ' + i.user.id);
   // Las ediciones del mensaje van en cola para que una vieja nunca pise la final
   let queue = Promise.resolve();
   const edit = (payload) => { queue = queue.then(() => i.editReply({ content: '', components: [], ...payload }).catch(() => {})); return queue; };
@@ -166,6 +167,7 @@ async function perform(i, id) {
     for (let n = 0; n < 3 && !bk; n++) {
       try { bk = await backup.takeBackup(g, { messages: false, by: i.user.id }); } catch (e) { lastErr = e; if (n < 2) await sleep(4000); }
     }
+    console.log('[hacer] ' + g.id + ': copia de seguridad ' + (bk ? bk.id : 'NO guardada (' + (lastErr && lastErr.message) + ')'));
     if (!bk) {
       await edit({ embeds: [progressEmbed(lc, x, ['❌ ' + L(lc, "I couldn't save the safety backup, so I deleted nothing.", 'No pude guardar la copia de seguridad, así que no borré nada.') + (lastErr && lastErr.message && lastErr.message !== 'busy' ? ' (' + lastErr.message.slice(0, 120) + ')' : '')], COLOR.red)] });
       return;
@@ -187,9 +189,11 @@ async function perform(i, id) {
     if (job.error) await edit({ embeds: [progressEmbed(lc, x, ['❌ ' + job.error, ...job.lines.slice(-8)], COLOR.red)] });
   } catch (e) {
     logErr(e);
+    console.log('[hacer] ' + g.id + ': ERROR ' + e.message);
     await edit({ embeds: [progressEmbed(lc, x, ['❌ ' + e.message], COLOR.red)] });
   } finally {
     running.delete(g.id);
+    console.log('[hacer] ' + g.id + ': terminado');
   }
 }
 

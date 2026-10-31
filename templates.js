@@ -185,28 +185,48 @@ const kindOf = { text: CT.GuildText, news: CT.GuildAnnouncement, voice: CT.Guild
  * Borrado total (solo lo pide /hacer, ya confirmado): quita todos los canales y todos los roles que el bot pueda borrar.
  * Nunca toca: el canal indicado en keepChannelId (se borra al final), los roles de integraciones (managed),
  * los roles del propio bot ni los que se pidan proteger en protectRoleIds.
+ *
+ * Va en dos pasos para que un corte (reinicio del bot, caída…) nunca deje el servidor vacío:
+ *   1) snapshotOld: apunta QUÉ hay ahora (sin borrar nada)
+ *   2) run() construye lo nuevo y, solo cuando está todo creado, purgeOld borra lo apuntado
  */
-async function wipeServer(g, opts, log) {
+const WIPE_REASON = 'Centinela: /hacer';
+
+async function snapshotOld(g, opts) {
   await g.channels.fetch().catch(() => {});
   await g.roles.fetch().catch(() => {});
-  const res = { channels: 0, roles: 0, failedChannels: [], keptRoles: [], failedRoles: 0 };
-  const REASON = 'Centinela: /hacer';
-
-  const chans = [...g.channels.cache.values()].filter((c) => !c.isThread() && c.id !== opts.keepChannelId);
-  chans.sort((a, b) => (a.type === CT.GuildCategory) - (b.type === CT.GuildCategory)); // primero los canales, al final las categorías
-  for (const c of chans) {
-    try { await c.delete(REASON); res.channels++; } catch (e) { res.failedChannels.push({ id: c.id, name: c.name, err: e.message }); }
-  }
-  log('  🗑️ ' + res.channels + ' canales borrados' + (res.failedChannels.length ? ' (' + res.failedChannels.length + ' no se pudieron borrar todavía)' : ''));
-
+  const channels = new Set([...g.channels.cache.values()].filter((c) => !c.isThread() && c.id !== opts.keepChannelId).map((c) => c.id));
   const protect = new Set(opts.protectRoleIds || []);
   const me = g.members.me;
   if (me) for (const r of me.roles.cache.values()) protect.add(r.id);
-  for (const r of [...g.roles.cache.values()]) {
+  const roles = new Set();
+  const kept = [];
+  for (const r of g.roles.cache.values()) {
     if (r.id === g.id || r.managed) continue;
-    if (protect.has(r.id)) { res.keptRoles.push(r.name); continue; }
+    if (protect.has(r.id)) { kept.push(r.name); continue; }
+    roles.add(r.id);
+  }
+  return { channels, roles, kept };
+}
+
+// Borra lo apuntado en el snapshot, salvo lo que se acaba de usar para la plantilla nueva (used)
+async function purgeOld(g, old, used, opts, log) {
+  await g.channels.fetch().catch(() => {});
+  await g.roles.fetch().catch(() => {});
+  const res = { channels: 0, roles: 0, failedChannels: [], keptRoles: old.kept.slice(), failedRoles: 0 };
+
+  const chans = [...old.channels].map((id) => g.channels.cache.get(id)).filter((c) => c && !used.channels.has(c.id));
+  chans.sort((a, b) => (a.type === CT.GuildCategory) - (b.type === CT.GuildCategory)); // primero los canales, al final las categorías
+  for (const c of chans) {
+    try { await c.delete(WIPE_REASON); res.channels++; } catch (e) { res.failedChannels.push({ id: c.id, name: c.name, err: e.message }); }
+  }
+  log('  🗑️ ' + res.channels + ' canales borrados' + (res.failedChannels.length ? ' (' + res.failedChannels.length + ' no se pudieron borrar todavía)' : ''));
+
+  for (const id of old.roles) {
+    const r = g.roles.cache.get(id);
+    if (!r || used.roles.has(id)) continue;
     if (!r.editable) { res.failedRoles++; continue; }
-    try { await r.delete(REASON); res.roles++; } catch (_) { res.failedRoles++; }
+    try { await r.delete(WIPE_REASON); res.roles++; } catch (_) { res.failedRoles++; }
   }
   log('  🗑️ ' + res.roles + ' roles borrados' + (res.keptRoles.length ? ' · conservados: ' + res.keptRoles.map((n) => '@' + n).join(', ') : '') + (res.failedRoles ? ' · ' + res.failedRoles + ' por encima de mí (no puedo borrarlos)' : ''));
 
@@ -220,29 +240,46 @@ async function wipeServer(g, opts, log) {
   return res;
 }
 
+// Borrado inmediato (sin construir nada): snapshot + purga
+async function wipeServer(g, opts, log) {
+  const old = await snapshotOld(g, opts);
+  return purgeOld(g, old, { channels: new Set(), roles: new Set() }, opts, log);
+}
+
 async function run(g, id, opts, job) {
   const tpl = T[id];
-  const log = (s) => { job.lines.push(s); };
+  const log = (s) => { job.lines.push(s); console.log('[plantilla] ' + String(s).replace(/\s+/g, ' ').trim().slice(0, 300)); };
   const cfg = getCfg(g.id);
   const me = g.members.me;
   const roles = {};
   const specials = {};
   const created = new Set(); // ids de canales creados ahora
 
-  /* ---- borrado total (solo /hacer) ---- */
+  /* ---- borrado total (solo /hacer): primero se construye lo nuevo y lo viejo se borra al final ---- */
+  let old = null;
+  const used = { roles: new Set(), channels: new Set() }; // roles y canales de la plantilla nueva (nunca se borran)
   if (opts.wipe) {
-    log('🧹 Borrando todo lo que había…');
-    job.wipe = await wipeServer(g, opts, log);
+    old = await snapshotOld(g, opts);
+    const needCh = chanCount(tpl) + tpl.cats.length + 3;
+    const needRoles = 3 + tpl.roles.length + tpl.selfRoles.length + 2;
+    if (old.channels.size + needCh > 470 || old.roles.size + needRoles > 235) {
+      log('🧹 Hay demasiadas cosas para tener lo viejo y lo nuevo a la vez: borro primero.');
+      job.wipe = await purgeOld(g, old, used, opts, log);
+      old = null;
+    } else log('🧱 Construyo lo nuevo primero; lo viejo se borra al final (si algo se corta, no te quedas sin servidor).');
   }
+  const isOldRole = (r) => !!old && old.roles.has(r.id);
+  const isOldChan = (c) => !!old && old.channels.has(c.id);
 
   /* ---- roles ---- */
   log('👥 Creando roles…');
   const mkRole = async (def, extra) => {
-    let r = g.roles.cache.find((x) => x.name === def.name);
+    let r = g.roles.cache.find((x) => x.name === def.name && !isOldRole(x)); // con /hacer nunca se reutilizan roles viejos
     if (!r) {
       r = await g.roles.create({ name: def.name, color: def.color || 0x99aab5, hoist: !!def.hoist, mentionable: !!def.mentionable, permissions: perm(def.perms || []), reason: 'Centinela: plantilla ' + id });
       log('  ✅ @' + def.name);
     } else log('  ↺ @' + def.name + ' ya existía');
+    used.roles.add(r.id);
     return r;
   };
   for (const key of ['admin', 'mod', 'helper']) {
@@ -290,13 +327,14 @@ async function run(g, id, opts, job) {
   for (const cdef of cats) {
     try {
       const isStaffCat = cdef === BASE_STAFF;
-      let cat = g.channels.cache.find((c) => c.type === CT.GuildCategory && c.name === cdef.name);
+      let cat = g.channels.cache.find((c) => c.type === CT.GuildCategory && c.name === cdef.name && !isOldChan(c));
       if (!cat) cat = await g.channels.create({ name: cdef.name, type: CT.GuildCategory, permissionOverwrites: isStaffCat ? overwrites({ staff: true }) : undefined, reason: 'Centinela: plantilla ' + id });
+      used.channels.add(cat.id);
       for (const c of cdef.ch) {
         try {
           const type = kindOf[c.k];
           const want = c.k === 'voice' ? c.name : c.name.toLowerCase().replace(/\s+/g, '-');
-          let ch = g.channels.cache.find((x) => x.parentId === cat.id && (x.name === want || x.name === c.name));
+          let ch = g.channels.cache.find((x) => x.parentId === cat.id && (x.name === want || x.name === c.name) && !isOldChan(x));
           if (!ch) {
             const payload = { name: c.name, type, parent: cat.id, reason: 'Centinela: plantilla ' + id };
             if (c.topic && c.k !== 'voice') payload.topic = c.topic;
@@ -310,6 +348,7 @@ async function run(g, id, opts, job) {
             }
             created.add(ch.id);
           }
+          used.channels.add(ch.id);
           if (c.sp) specials[c.sp] = ch;
         } catch (e) { log('  ❌ ' + c.name + ': ' + e.message); }
       }
@@ -322,6 +361,12 @@ async function run(g, id, opts, job) {
     for (const ch of [specials.sub, specials.subvoice].filter(Boolean)) {
       await ch.permissionOverwrites.set([{ id: g.id, deny: [P.ViewChannel] }, { id: subRole.id, allow: [P.ViewChannel, P.SendMessages, P.Connect, P.Speak] }, ...staffIds.map((sid) => ({ id: sid, allow: [P.ViewChannel, P.SendMessages, P.Connect] })), { id: me.id, allow: [P.ViewChannel, P.SendMessages, P.Connect] }]).catch(() => {});
     }
+  }
+
+  /* ---- ahora sí: se borra lo viejo (todo lo nuevo ya existe) ---- */
+  if (old) {
+    log('🗑️ Todo lo nuevo está creado: borro lo que había antes…');
+    job.wipe = await purgeOld(g, old, used, opts, log);
   }
 
   /* ---- reglas ---- */
@@ -422,4 +467,4 @@ const status = (gid) => {
   return j ? { running: j.running, done: j.done, error: j.error, tpl: j.tpl, lines: j.lines } : { running: false, done: false, lines: [] };
 };
 
-module.exports = { T, LIST, start, status, wipeServer };
+module.exports = { T, LIST, start, status, wipeServer, snapshotOld, purgeOld };
