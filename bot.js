@@ -102,8 +102,8 @@ const DEFAULTS = {
   raidUntil: 0,
   invitesWereOff: false,
   logs: { raid: [], mod: [], welcome: [], goodbye: [], messages: [], server: [] },
-  welcome: { enabled: false, channel: null, message: null, dm: false, dmMessage: null, image: false },
-  goodbye: { enabled: false, channel: null, message: null, dm: false, dmMessage: null, image: false },
+  welcome: { enabled: false, channel: null, message: null, dm: false, dmMessage: null, image: true, imageText: null },
+  goodbye: { enabled: false, channel: null, message: null, dm: false, dmMessage: null, image: true, imageText: null },
 };
 
 const guilds = jsonStore('guilds.json', () => ({}));
@@ -457,34 +457,98 @@ async function handleJoin(member) {
 }
 
 /* ============================ bienvenidas / despedidas ============================ */
-async function sendGreeting(kind, member) {
+const greetState = new Map(); // «guild:kind» → { at, ok, error }: lo último que pasó (se enseña en /bienvenida y /despedida)
+const greetKey = (guild, kind) => guild.id + ':' + kind;
+const PERM_ES = { ViewChannel: 'Ver el canal', SendMessages: 'Enviar mensajes', AttachFiles: 'Adjuntar archivos', EmbedLinks: 'Insertar enlaces' };
+
+/* Permisos que le faltan al bot en ese canal para publicar la bienvenida (con o sin imagen) */
+function greetMissing(guild, ch, withImage) {
+  const me = guild.members.me;
+  const perms = me && ch.permissionsFor ? ch.permissionsFor(me) : null;
+  if (!perms) return [];
+  return ['ViewChannel', 'SendMessages'].concat(withImage ? ['AttachFiles'] : []).filter((k) => !perms.has(P[k])).map((k) => PERM_ES[k]);
+}
+
+async function greetChannel(guild, id) {
+  if (!id) return null;
+  const ch = guild.channels.cache.get(id) || (await guild.channels.fetch(id).catch(() => null));
+  return ch && ch.isTextBased() && !ch.isDMBased() ? ch : null;
+}
+
+/* Manda la bienvenida o la despedida. opts.test = ignora que esté desactivada (la prueba de /bienvenida probar).
+ * Devuelve { ok, channel, image, error, dm } y deja el último resultado en greetState (los fallos ya no se tragan en silencio). */
+async function sendGreeting(kind, member, opts = {}) {
+  const res = { ok: false, channel: null, image: false, error: null, dm: null };
+  const guild = member && member.guild;
   try {
-    const guild = member.guild;
     const g = getCfg(guild.id)[kind];
-    if (!g.enabled) return;
+    if (!g.enabled && !opts.test) return res;
     const w = kind === 'welcome';
-    const vars = { user: '<@' + member.id + '>', username: member.user.username, server: guild.name, count: guild.memberCount };
+    const user = member.user;
+    const shown = member.displayName || user.username;
+    const vars = { user: '<@' + member.id + '>', username: user.username, server: guild.name, count: guild.memberCount };
     const defMsg = w
       ? GL(guild, '👋 Welcome {user} to **{server}**! You are member #{count}.', '👋 ¡Bienvenido {user} a **{server}**! Eres el miembro #{count}.')
       : GL(guild, '😢 **{username}** left **{server}**.', '😢 **{username}** se fue de **{server}**.');
     const defDm = w
       ? GL(guild, 'Welcome to **{server}**!', '¡Bienvenido a **{server}**!')
       : GL(guild, 'Sorry to see you go from **{server}**.', 'Lamentamos que te vayas de **{server}**.');
-    if (g.channel) {
-      const ch = guild.channels.cache.get(g.channel) || (await guild.channels.fetch(g.channel).catch(() => null));
-      if (ch && ch.isTextBased()) {
+    const defImg = w
+      ? GL(guild, 'Welcome to {server}. You are member #{count}.', 'Bienvenido a {server}. Eres el miembro #{count}.')
+      : GL(guild, '{username} left {server}. We are {count} now.', '{username} se fue de {server}. Ahora somos {count}.');
+
+    // canal: el configurado; si ya no existe, el de avisos del sistema
+    let ch = await greetChannel(guild, g.channel);
+    if (!ch && g.channel) {
+      ch = await greetChannel(guild, guild.systemChannelId);
+      if (ch) console.log('[' + kind + '] el canal configurado ya no existe en ' + guild.name + ': uso #' + ch.name);
+    }
+    if (!ch) {
+      res.error = g.channel ? 'El canal configurado ya no existe (vuelve a elegirlo).' : 'No hay canal configurado.';
+    } else {
+      res.channel = ch.id;
+      const want = !!g.image;
+      const miss = greetMissing(guild, ch, false);
+      if (miss.length) res.error = 'Me falta en #' + ch.name + ': ' + miss.join(', ') + '.';
+      else {
         const payload = { content: fmt(g.message || defMsg, vars), allowedMentions: { users: [member.id] } };
-        if (g.image) {
-          const png = await require('./card').make({ title: w ? GL(guild, 'Welcome!', '¡Bienvenido!') : GL(guild, 'Goodbye', 'Hasta luego'), name: member.user.username, sub: guild.name + ' · #' + guild.memberCount, avatar: member.user.displayAvatarURL({ extension: 'png', size: 256 }), color: getCfg(guild.id).ui.color });
-          if (png) payload.files = [{ attachment: png, name: (w ? 'welcome' : 'goodbye') + '.png' }];
+        if (want) {
+          const png = await require('./card').make({
+            title: w ? GL(guild, 'Welcome!', '¡Bienvenido!') : GL(guild, 'Goodbye', 'Hasta luego'),
+            name: shown,
+            text: fmt(g.imageText || defImg, { ...vars, user: shown }),
+            sub: guild.name + ' · #' + guild.memberCount,
+            avatar: user.displayAvatarURL({ extension: 'png', size: 256 }),
+            color: getCfg(guild.id).ui.color,
+          });
+          const noFile = greetMissing(guild, ch, true).length > 0; // sin «Adjuntar archivos» la imagen no puede ir
+          if (png && !noFile) { payload.files = [{ attachment: png, name: (w ? 'welcome' : 'goodbye') + '.png' }]; res.image = true; }
+          else res.error = noFile ? 'Me falta «Adjuntar archivos» en #' + ch.name + ': va sin imagen.' : 'No pude dibujar la imagen (va solo el texto).';
         }
-        await ch.send(payload).catch(() => {});
+        try {
+          await ch.send(payload);
+          res.ok = true;
+        } catch (e) {
+          if (payload.files) { // a veces falla solo por el archivo: se reintenta solo con el texto
+            delete payload.files;
+            res.image = false;
+            try { await ch.send(payload); res.ok = true; res.error = 'La imagen no se pudo enviar (' + e.message + '): fue solo el texto.'; } catch (e2) { res.error = e2.message; }
+          } else res.error = e.message;
+        }
       }
     }
-    if (g.dm) await member.send(fmt(g.dmMessage || defDm, vars)).catch(() => {});
+    if (g.dm && (w || opts.test)) {
+      try { await member.send(fmt(g.dmMessage || defDm, vars)); res.dm = 'ok'; } catch (_) { res.dm = 'fail'; }
+    }
   } catch (e) {
+    res.error = (e && e.message) || String(e);
     logErr(e);
   }
+  if (guild) {
+    greetState.set(greetKey(guild, kind), { at: Date.now(), ok: res.ok, error: res.error });
+    if (res.error || !res.ok) console.log('[' + kind + '] ' + guild.name + ': ' + (res.ok ? 'enviada con aviso' : 'NO se envió') + ' — ' + (res.error || '?'));
+  }
+  return res;
 }
 
 /* ============================ anti-nuke ============================ */
@@ -959,6 +1023,7 @@ commands.push({
 /* ---------- /welcome y /goodbye ---------- */
 function greetCommand(kind) {
   const w = kind === 'welcome';
+  const es = (o, d) => o.setDescriptionLocalizations({ 'es-ES': d, 'es-419': d });
   return {
     data: loc(
       new SlashCommandBuilder()
@@ -966,34 +1031,69 @@ function greetCommand(kind) {
         .setDescription(w ? 'Configure the welcome message' : 'Configure the goodbye message')
         .setDefaultMemberPermissions(P.ManageGuild)
         .setDMPermission(false)
-        .addBooleanOption((o) => o.setName('enabled').setDescription('Turn on or off'))
-        .addChannelOption((o) => o.setName('channel').setDescription('Channel for the message').addChannelTypes(...TEXT_CHANNELS))
-        .addStringOption((o) => o.setName('message').setDescription('Text. Variables: {user} {username} {server} {count}').setMaxLength(1500))
-        .addBooleanOption((o) => o.setName('dm').setDescription('Also send it by DM'))
-        .addStringOption((o) => o.setName('dm_message').setDescription('DM text (same variables)').setMaxLength(1500)),
+        .addBooleanOption((o) => es(o.setName('enabled').setDescription('Turn on or off (setting anything below turns it on)'), 'Activar o desactivar (al cambiar cualquier cosa se activa sola)'))
+        .addChannelOption((o) => es(o.setName('channel').setDescription('Channel for the message').addChannelTypes(...TEXT_CHANNELS), 'Canal donde sale el mensaje'))
+        .addStringOption((o) => es(o.setName('message').setDescription('Text. Variables: {user} {username} {server} {count}').setMaxLength(1500), 'Texto del mensaje. Variables: {user} {username} {server} {count}'))
+        .addBooleanOption((o) => es(o.setName('image').setDescription('Send the picture with avatar, name and text'), 'Enviar la imagen con avatar, nombre y texto'))
+        .addStringOption((o) => es(o.setName('image_text').setDescription('Text written on the picture (same variables)').setMaxLength(200), 'Texto que va escrito en la imagen (mismas variables)'))
+        .addBooleanOption((o) => es(o.setName('dm').setDescription('Also send it by DM'), 'Enviarlo también por MD'))
+        .addStringOption((o) => es(o.setName('dm_message').setDescription('DM text (same variables)').setMaxLength(1500), 'Texto del MD (mismas variables)'))
+        .addBooleanOption((o) => es(o.setName('test').setDescription('Send a test now, as if you had just ' + (w ? 'joined' : 'left')), 'Enviar una prueba ahora, como si acabaras de ' + (w ? 'entrar' : 'salir'))),
       w ? 'bienvenida' : 'despedida',
       w ? 'Configura el mensaje de bienvenida' : 'Configura el mensaje de despedida'
     ),
     async execute(i) {
+      const lc = i.locale;
+      await i.deferReply({ flags: EPHEMERAL });
       const cfg = getCfg(i.guild.id);
       const g = cfg[kind];
       const en = i.options.getBoolean('enabled');
       const ch = i.options.getChannel('channel');
       const msg = i.options.getString('message');
+      const img = i.options.getBoolean('image');
+      const imgText = i.options.getString('image_text');
       const dm = i.options.getBoolean('dm');
       const dmMsg = i.options.getString('dm_message');
-      if (en !== null) g.enabled = en;
+      const test = i.options.getBoolean('test');
+      const touched = !!(ch || msg || imgText || dmMsg) || img !== null || dm !== null;
       if (ch) g.channel = ch.id;
       if (msg) g.message = msg;
+      if (img !== null) g.image = img;
+      if (imgText) g.imageText = imgText;
       if (dm !== null) g.dm = dm;
       if (dmMsg) g.dmMessage = dmMsg;
+      // sin canal: se usa el de avisos del servidor o, si no, este mismo (antes se quedaba sin canal y nunca salía nada)
+      let note = '';
+      if (!g.channel && (en === true || touched || test)) {
+        const sys = await greetChannel(i.guild, i.guild.systemChannelId);
+        const pick = sys && !greetMissing(i.guild, sys, false).length ? sys : i.channel;
+        if (pick) { g.channel = pick.id; note = '\n' + L(lc, '📍 No channel was set, so I used <#' + pick.id + '>. Change it with `channel:`.', '📍 No había canal, así que puse <#' + pick.id + '>. Cámbialo con `channel:`.'); }
+      }
+      // poner el canal o el texto lo activa (antes había que añadir además enabled:true y por eso «no salía»)
+      if (en !== null) g.enabled = en;
+      else if (touched && g.channel) g.enabled = true;
       saveCfg();
-      const lc = i.locale;
-      return say(
-        i,
-        L(lc, '✅ Saved.\n', '✅ Guardado.\n') +
-          onOff(g.enabled) + ' · ' + (g.channel ? '<#' + g.channel + '>' : L(lc, 'no channel', 'sin canal')) + ' · DM: ' + (g.dm ? 'on' : 'off')
-      );
+      const target = g.channel ? await greetChannel(i.guild, g.channel) : null;
+      const lines = [touched || en !== null ? L(lc, '✅ Saved.', '✅ Guardado.') : L(lc, 'ℹ️ Current settings:', 'ℹ️ Ajustes actuales:')];
+      lines.push(onOff(g.enabled) + ' ' + (g.enabled ? L(lc, 'On', 'Activada') : L(lc, 'Off', 'Desactivada')) + ' · ' + (g.channel ? '<#' + g.channel + '>' : L(lc, 'no channel', 'sin canal')) + ' · ' + L(lc, 'Image', 'Imagen') + ': ' + (g.image ? '✅' : '❌') + ' · DM: ' + (g.dm ? '✅' : '❌'));
+      if (note) lines.push(note.trim());
+      if (g.channel && !target) lines.push('⚠️ ' + L(lc, 'That channel no longer exists: choose another with `channel:`.', 'Ese canal ya no existe: elige otro con `channel:`.'));
+      if (target) {
+        const miss = greetMissing(i.guild, target, !!g.image);
+        if (miss.length) lines.push('⚠️ ' + L(lc, 'I am missing in <#' + target.id + '>: ', 'Me falta en <#' + target.id + '>: ') + miss.join(', ') + '. ' + L(lc, 'Give me those permissions or it will not show up.', 'Dame esos permisos o no saldrá.'));
+      }
+      if (test) {
+        const r = await sendGreeting(kind, i.member, { test: true });
+        lines.push(r.ok
+          ? '🧪 ' + L(lc, 'Test sent to <#' + r.channel + '>', 'Prueba enviada a <#' + r.channel + '>') + (r.image ? ' ✅' : ' (' + L(lc, 'text only', 'solo texto') + ')') + (r.error ? '\n⚠️ ' + r.error : '')
+          : '🧪 ❌ ' + L(lc, 'The test could not be sent: ', 'No se pudo enviar la prueba: ') + (r.error || '?'));
+        if (r.dm) lines.push(r.dm === 'ok' ? '📩 ' + L(lc, 'DM sent to you.', 'MD enviado a ti.') : '📩 ' + L(lc, 'I could not DM you (your DMs are closed).', 'No pude escribirte por MD (los tienes cerrados).'));
+      } else {
+        const st = greetState.get(greetKey(i.guild, kind));
+        if (st && !st.ok) lines.push('⚠️ ' + L(lc, 'Last attempt failed: ', 'El último intento falló: ') + (st.error || '?'));
+        if (!test && g.enabled && g.channel) lines.push(L(lc, '💡 Use `test:true` to see it right now.', '💡 Usa `test:true` para verlo ahora mismo.'));
+      }
+      return i.editReply({ content: lines.join('\n') });
     },
   };
 }
@@ -1219,6 +1319,7 @@ module.exports = {
   commands,
   buttons: [],
   attach,
+  sendGreeting,
   restoreRaidTimers,
   jsonStore,
   L,

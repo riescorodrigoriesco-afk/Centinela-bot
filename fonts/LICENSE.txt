@@ -1,0 +1,3 @@
+Fuentes incluidas para dibujar las imágenes de bienvenida/despedida (el contenedor del bot no trae ninguna).
+- Poppins: © Indian Type Foundry — SIL Open Font License 1.1 (https://openfontlicense.org)
+- DejaVu Sans: © Bitstream, Tavmjong Bah — licencia libre de DejaVu/Bitstream Vera (permite redistribuir)

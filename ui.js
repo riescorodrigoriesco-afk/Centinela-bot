@@ -46,6 +46,16 @@ const colorOf = (cfg) => {
 const pick = (lc, arr) => L(lc, arr[0], arr[1]);
 
 /* ============================ módulos ============================ */
+/* Prueba de bienvenida/despedida desde el panel: usa a quien pulsa (o al dueño si viene de la web) */
+const greetTest = (kind) => async (x) => {
+  let m = x.i && x.i.member;
+  if (!m || !m.guild) m = await x.g.members.fetch(x.g.ownerId).catch(() => null);
+  if (!m) return pick(x.lc, ['❌ There is no member to test with.', '❌ No hay ningún miembro con quien probar.']);
+  const r = await bot.sendGreeting(kind, m, { test: true });
+  if (!r.ok) return '🧪 ❌ ' + pick(x.lc, ['The test could not be sent: ', 'No se pudo enviar la prueba: ']) + (r.error || '?');
+  return '🧪 ✅ ' + pick(x.lc, ['Test sent to ', 'Prueba enviada a ']) + '<#' + r.channel + '>' + (r.image ? '' : pick(x.lc, [' (text only)', ' (solo texto)'])) + (r.error ? '\n⚠️ ' + r.error : '');
+};
+
 /*
  * n: nombre [en, es] · d: descripción · on: ruta booleana (o get/set) · fields: valores editables
  * filters: interruptores múltiples · pickers: selectores de canal/rol/usuario · acts: botones de acción
@@ -225,9 +235,11 @@ const MODS = [
     ],
     fields: [
       { k: 'message', path: ['welcome', 'message'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Channel message (empty = default)', 'Mensaje del canal (vacío = por defecto)'] },
+      { k: 'imagetext', path: ['welcome', 'imageText'], t: 'str', long: true, optional: true, min: 0, max: 200, l: ['Text on the picture (empty = default)', 'Texto de la imagen (vacío = por defecto)'] },
       { k: 'dmmessage', path: ['welcome', 'dmMessage'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Private message (empty = default)', 'Mensaje privado (vacío = por defecto)'] },
     ],
-    pickers: [{ key: 'channel', type: 'channel', n: ['Welcome channel', 'Canal de bienvenida'], set: (c, v) => (c.welcome.channel = v[0]), show: (c) => (c.welcome.channel ? '<#' + c.welcome.channel + '>' : '—') }],
+    acts: [{ key: 'test', n: ['Send a test now', 'Enviar una prueba ahora'], run: greetTest('welcome') }],
+    pickers: [{ key: 'channel', type: 'channel', n: ['Welcome channel', 'Canal de bienvenida'], set: (c, v) => { c.welcome.channel = v[0]; c.welcome.enabled = true; }, show: (c) => (c.welcome.channel ? '<#' + c.welcome.channel + '>' : '—') }],
   },
   {
     id: 'goodbye', ico: '😢', n: ['Goodbye', 'Despedida'], d: ['Message and image when someone leaves. Variables: {username} {server} {count}', 'Mensaje e imagen cuando alguien se va. Variables: {username} {server} {count}'],
@@ -243,9 +255,11 @@ const MODS = [
     ],
     fields: [
       { k: 'message', path: ['goodbye', 'message'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Channel message (empty = default)', 'Mensaje del canal (vacío = por defecto)'] },
+      { k: 'imagetext', path: ['goodbye', 'imageText'], t: 'str', long: true, optional: true, min: 0, max: 200, l: ['Text on the picture (empty = default)', 'Texto de la imagen (vacío = por defecto)'] },
       { k: 'dmmessage', path: ['goodbye', 'dmMessage'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Private message (empty = default)', 'Mensaje privado (vacío = por defecto)'] },
     ],
-    pickers: [{ key: 'channel', type: 'channel', n: ['Goodbye channel', 'Canal de despedida'], set: (c, v) => (c.goodbye.channel = v[0]), show: (c) => (c.goodbye.channel ? '<#' + c.goodbye.channel + '>' : '—') }],
+    acts: [{ key: 'test', n: ['Send a test now', 'Enviar una prueba ahora'], run: greetTest('goodbye') }],
+    pickers: [{ key: 'channel', type: 'channel', n: ['Goodbye channel', 'Canal de despedida'], set: (c, v) => { c.goodbye.channel = v[0]; c.goodbye.enabled = true; }, show: (c) => (c.goodbye.channel ? '<#' + c.goodbye.channel + '>' : '—') }],
   },
   {
     id: 'trust', ico: '🤝', n: ['Trusted list', 'Lista de confianza'], d: ['Trusted users skip the protections; exempt channels are ignored', 'Los usuarios de confianza se saltan las protecciones; los canales exentos se ignoran'],

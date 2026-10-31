@@ -17,8 +17,9 @@ const hacerMod = require('./hacer');
 const sugMod = require('./sugerencias');
 const mensajesMod = require('./mensajes');
 
-// Comandos slash: /help, /guía, /putbot, /setidioma, las camisetas, /hacer y /enviarmensaje. El resto se maneja con menús, botones y el prefijo.
-const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands, ...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands];
+// Comandos slash: /help, /guía, /putbot, /setidioma, las camisetas, /hacer, /enviarmensaje y /welcome (/bienvenida) y /goodbye (/despedida). El resto se maneja con menús, botones y el prefijo.
+const GREET_COMMANDS = botMod.commands.filter((c) => ['welcome', 'goodbye'].includes(c.data.name));
+const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands, ...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands, ...GREET_COMMANDS];
 const COMMAND_MAP = new Map(ALL_COMMANDS.map((c) => [c.data.name, c]));
 
 const FULL_INTENTS = [
@@ -212,7 +213,7 @@ async function registerCommands(c) {
   }
   // Un comando con formato inválido no debe tumbar a los demás: se registran primero los básicos y luego uno a uno los extra
   try {
-    const extra = [...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands];
+    const extra = [...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands, ...GREET_COMMANDS];
     const base = ALL_COMMANDS.filter((x) => !extra.includes(x));
     await rest.put(Routes.applicationCommands(c.user.id), { body: base.map((x) => x.data.toJSON()) });
     log('Comandos básicos registrados (' + base.length + ')');
@@ -339,6 +340,10 @@ async function startBot() {
       registerCommands(c);
       setDescription(c);
       try { botMod.restoreRaidTimers(c); } catch (e) { log('restoreRaidTimers: ' + e.message); }
+      // Comprobación de la imagen de bienvenida: dibuja un texto de prueba y cuenta píxeles (0 = las fuentes no funcionan)
+      try {
+        require('./card').selfTest().then((r) => log('[tarjeta] ' + (r.ok ? 'imagen de bienvenida OK · fuentes propias=' + r.fonts + ' · ' + r.lit + ' px de texto · PNG ' + r.png + ' B' : '⚠️ PROBLEMA: ' + r.why))).catch((e) => log('[tarjeta] error en la prueba: ' + e.message));
+      } catch (e) { log('[tarjeta] ' + e.message); }
     };
 
     botMod.attach(c);

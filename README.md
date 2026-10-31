@@ -28,6 +28,8 @@ El dueño del servidor, el propio bot y los usuarios de la whitelist nunca son s
 
 Los comandos y mensajes se muestran en **español o inglés** según el idioma del cliente de Discord de cada persona.
 
+**Bienvenidas y despedidas:** `/bienvenida` y `/despedida` (o el panel de `/help` → Ajustes). Basta con elegir `channel:` para que se activen; `image:` pone la imagen con avatar, nombre y un texto (`image_text:`, con `{user}` `{username}` `{server}` `{count}`) y `test:true` manda una prueba al instante y dice qué falla (permisos «Enviar mensajes» / «Adjuntar archivos», canal borrado…). La imagen usa las fuentes de `fonts/` (el contenedor no trae ninguna) y al arrancar el registro dice `[tarjeta] imagen de bienvenida OK`.
+
 **Logs por tipo:** `raid`, `mod`, `welcome`, `goodbye`. Puedes poner varios canales por tipo o solo uno (`/logs add`). Si no hay canal de raid configurado, el dueño recibe los avisos por mensaje directo.
 
 ## Antes de activar: Developer Portal

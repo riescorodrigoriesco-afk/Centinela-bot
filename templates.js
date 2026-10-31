@@ -388,7 +388,7 @@ async function run(g, id, opts, job) {
     log('👋 Bienvenidas activadas en #' + specials.welcome.name);
   }
   if (specials.goodbye) {
-    cfg.goodbye = { ...cfg.goodbye, enabled: true, channel: specials.goodbye.id, image: false };
+    cfg.goodbye = { ...cfg.goodbye, enabled: true, channel: specials.goodbye.id, image: true };
     log('🚪 Despedidas activadas.');
   }
 
