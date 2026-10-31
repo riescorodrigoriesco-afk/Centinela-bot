@@ -487,7 +487,9 @@ def({
     const id = String(ctx.arg(0) || '').toLowerCase();
     const p = prefixOf(ctx);
     if (!id || !tpl.T[id]) {
-      return ctx.reply(T(ctx, 'Pick a template: ', 'Elige una plantilla: ') + '\n' + tpl.LIST().map((x) => x.ico + ' `' + x.id + '` — ' + x.desc).join('\n') + '\n\n' + T(ctx, 'Apply with ', 'Aplícala con ') + '`' + p + 'plantilla <' + T(ctx, 'name', 'nombre') + '> confirm`');
+      // Son decenas de plantillas: se listan solo con su nombre corto para no pasar del límite de Discord
+      const list = tpl.LIST().map((x) => x.ico + ' `' + x.id + '`').join('  ');
+      return ctx.reply((T(ctx, 'Pick a template: ', 'Elige una plantilla: ') + '\n' + list + '\n\n' + T(ctx, 'Apply with ', 'Aplícala con ') + '`' + p + 'plantilla <' + T(ctx, 'name', 'nombre') + '> confirm`' + '\n' + T(ctx, 'Tip: **/hacer** lets you search them by typing, and the web panel shows each one with its description.', 'Consejo: **/hacer** te deja buscarlas escribiendo, y el panel web muestra cada una con su descripción.')).slice(0, 1990));
     }
     if (String(ctx.arg(1) || '').toLowerCase() !== 'confirm') {
       const x = tpl.LIST().find((y) => y.id === id);

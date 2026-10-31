@@ -60,15 +60,15 @@ const mods = [
     }],
   },
   {
-    id: 'rolepanel', ico: '🎛️', inst: false, n: ['Role panels', 'Paneles de roles'], d: ['Members pick roles with buttons, a dropdown menu or reactions (up to 10 roles)', 'Los miembros eligen roles con botones, un menú desplegable o reacciones (hasta 10 roles)'],
+    id: 'rolepanel', ico: '🎛️', inst: false, n: ['Role panels', 'Paneles de roles'], d: ['Members pick roles with buttons, a dropdown menu or reactions (up to 25 roles; 20 with reactions)', 'Los miembros eligen roles con botones, un menú desplegable o reacciones (hasta 25 roles; 20 con reacciones)'],
     fields: [
       { k: 'mode', path: ['rolePanel', 'mode'], t: 'choice', c: ['buttons', 'menu', 'reactions'], l: ['Mode: buttons / menu / reactions', 'Modo: buttons / menu / reactions'] },
-      { k: 'emojis', path: ['rolePanel', 'emojis'], t: 'list', max: 10, optional: true, l: ['Emojis for reactions (same order as roles)', 'Emojis para reacciones (mismo orden que los roles)'] },
+      { k: 'emojis', path: ['rolePanel', 'emojis'], t: 'list', max: 20, optional: true, l: ['Emojis for reactions (same order as roles)', 'Emojis para reacciones (mismo orden que los roles)'] },
       { k: 'temp', path: ['rolePanel', 'tempHours'], t: 'int', min: 0, max: 8760, l: ['Temporary role hours (0 = permanent)', 'Horas del rol temporal (0 = permanente)'] },
     ],
     pickers: [
       { key: 'channel', type: 'channel', n: ['Panel channel', 'Canal del panel'], set: (c, v) => (c.rolePanel.channel = v[0]), show: (c) => (c.rolePanel.channel ? '<#' + c.rolePanel.channel + '>' : '—') },
-      { key: 'roles', type: 'role', multi: true, n: ['Roles offered (max 10)', 'Roles ofrecidos (máx. 10)'], set: (c, v) => (c.rolePanel.roles = v.slice(0, 10)), show: (c) => c.rolePanel.roles.map((i) => '<@&' + i + '>').join(' ') || '—' },
+      { key: 'roles', type: 'role', multi: true, n: ['Roles offered (max 25)', 'Roles ofrecidos (máx. 25)'], set: (c, v) => (c.rolePanel.roles = v.slice(0, 25)), show: (c) => c.rolePanel.roles.map((i) => '<@&' + i + '>').join(' ') || '—' },
     ],
     acts: [{
       key: 'panel', n: ['Post role panel', 'Publicar panel de roles'],
@@ -85,6 +85,7 @@ const mods = [
           await ch.send({ embeds: [e], components: [new ActionRowBuilder().addComponents(menu)] });
         } else if (rp.mode === 'reactions') {
           const em = rp.emojis;
+          if (roles.length > 20) throw new Error(L(x.lc, 'Discord allows 20 reactions per message: pick up to 20 roles or use buttons / menu.', 'Discord admite 20 reacciones por mensaje: elige hasta 20 roles o usa botones / menú.'));
           if (em.length < roles.length) throw new Error(L(x.lc, 'Add one emoji per role in "Edit values".', 'Añade un emoji por rol en "Editar valores".'));
           e.setDescription(roles.map((r, n) => em[n] + ' → ' + r.name).join('\n'));
           const m = await ch.send({ embeds: [e] });

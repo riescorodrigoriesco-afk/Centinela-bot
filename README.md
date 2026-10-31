@@ -78,6 +78,12 @@ Prefijo `$` (cambia con `$setprefix`) y slash `/`: `autosetup`, `config show`, `
 
 Comandos slash extra: `/hacer` (el dueño o cualquier Administrador; guarda una copia, **borra todos los canales y roles** y construye el servidor completo según el tipo elegido, con permisos, normas, tickets, roles por botones, antiraid y el juego de camisetas) y `/setchannel` `/coleccion` `/intercambio` `/ajustes` (camisetas). `/enviarmensaje` (Administrador): abre un cuadro para escribir el mensaje (admite formato de Discord, enlaces, `{user}`/`{server}` y un botón con enlace), enseña la vista previa y, al confirmar, lo manda por MD a todos los miembros despacio (≈2 s por persona, se frena solo si Discord lo pide), con botón «No recibir más», botón de parar e informe final por MD. Si algo queda a medias (canal o rol borrado, panel sin publicar, canal de reglas vacío…) el bot menciona al dueño con una «💡 Sugerencia».
 
+**Plantillas de servidor (44).** Se eligen en `/hacer tipo` (escribe para buscar: `liga`, `boxeo`, `nba`…), con `$plantilla` o en el panel web (con buscador). Las generales son comunidad, gaming, Minecraft, estudio, tienda, anime, creador, roleplay y proyecto. Las deportivas (`templates_deportes.js`) llevan un rol con el color del equipo y un canal por equipo, más jornada, fichajes, tácticas, quiniela, fantasy y salas de voz:
+- **Ligas de fútbol:** LaLiga, Premier League, Serie A, Bundesliga, Ligue 1, Liga MX, Liga Profesional Argentina, Brasileirão, Primeira Liga, Eredivisie, Saudi Pro League y MLS.
+- **Fútbol en general:** Champions League / Europa, Selecciones y Mundial, Fútbol (todas las ligas), tu propia liga o torneo y EA FC.
+- **Otros deportes:** boxeo (una categoría de peso por rol y federaciones), MMA/UFC, lucha libre, NBA, baloncesto, NFL (32 canales de equipo), béisbol, Fórmula 1, MotoGP, tenis, ciclismo, rugby, golf, pádel, running, gimnasio, esports y «todos los deportes».
+Las listas de equipos están en `templates_deportes.js` (se cambian en un momento al empezar una temporada). Los paneles de roles por botones admiten hasta 25 roles (20 con reacciones).
+
 El comando principal es `/help`: abre un menú con la tabla de comandos y funciones, **Instalar** (módulos como RaidProtect), **Ajustes** (valores y filtros por módulo), **Estado** y **Reportar**. Los comandos con prefijo siguen disponibles. Los minijuegos (`games.js`) ya no se registran como slash.
 
 ## Panel web completo

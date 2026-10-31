@@ -66,7 +66,36 @@ function progressEmbed(lc, x, lines, color) {
 }
 
 /* ============================ comando ============================ */
-const choices = () => Object.entries(tpl.T).map(([id, x]) => ({ name: (x.ico + ' ' + x.n).slice(0, 100), value: id }));
+// Hay decenas de plantillas (más de las 25 opciones que admite Discord), así que «tipo» se escribe y se busca con autocompletado
+const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9ñ]+/g, ' ').trim();
+const POPULAR = ['comunidad', 'gaming', 'minecraft', 'anime', 'estudio', 'laliga', 'premier', 'seriea', 'bundesliga', 'ligue1', 'ligamx', 'champions', 'selecciones', 'futbol', 'torneo', 'eafc', 'boxeo', 'mma', 'lucha', 'nba', 'nfl', 'f1', 'tenis', 'todos', 'esports'];
+const label = (id) => { const x = tpl.T[id]; return (x.ico + ' ' + x.n).slice(0, 100); };
+
+// Plantillas que encajan con lo escrito (nombre, id o descripción), las mejores primero
+function search(q) {
+  const n = norm(q);
+  if (!n) return POPULAR.filter((id) => tpl.T[id]);
+  const words = n.split(' ');
+  const scored = [];
+  for (const [id, x] of Object.entries(tpl.T)) {
+    const name = norm(x.n);
+    const hay = name + ' ' + norm(id) + ' ' + norm(x.d);
+    if (!words.every((w) => hay.includes(w))) continue;
+    scored.push([(name.startsWith(n) || norm(id) === n ? 0 : name.includes(n) ? 1 : words.every((w) => name.includes(w)) ? 2 : 3), id]);
+  }
+  return scored.sort((a, b) => a[0] - b[0]).map((y) => y[1]);
+}
+
+// Lo que llega en «tipo»: el id exacto (lo normal al elegir de la lista) o, si lo escribieron a mano, la mejor coincidencia
+function resolve(raw) {
+  const r = String(raw || '').trim();
+  if (!r) return 'comunidad';
+  if (tpl.T[r]) return r;
+  const low = norm(r);
+  const byName = Object.entries(tpl.T).find(([id, x]) => norm(x.ico + ' ' + x.n) === low || norm(x.n) === low || norm(id) === low);
+  if (byName) return byName[0];
+  return search(r)[0] || null;
+}
 
 const command = {
   data: new SlashCommandBuilder()
@@ -75,7 +104,13 @@ const command = {
     .setDescriptionLocalizations(es2('Hace el servidor entero: canales, roles, permisos y la configuración del bot (borra lo que haya)'))
     .setDMPermission(false)
     .setDefaultMemberPermissions(P.Administrator)
-    .addStringOption((o) => o.setName('tipo').setDescription('Kind of server (default: community)').setDescriptionLocalizations(es2('Tipo de servidor (por defecto: comunidad)')).addChoices(...choices())),
+    .addStringOption((o) => o.setName('tipo').setDescription('Kind of server: type to search (football leagues, boxing, NBA, gaming…)').setDescriptionLocalizations(es2('Tipo de servidor: escribe para buscar (ligas de fútbol, boxeo, NBA, gaming…)')).setAutocomplete(true)),
+  async autocomplete(i) {
+    try {
+      const out = search(i.options.getFocused()).slice(0, 25).map((id) => ({ name: label(id), value: id }));
+      await i.respond(out);
+    } catch (_) { /* la interacción caducó */ }
+  },
   async execute(i) {
     const g = i.guild;
     if (!g) return;
@@ -86,8 +121,12 @@ const command = {
       return i.reply({ content: L(lc, '❌ I need the **Manage Channels** and **Manage Roles** permissions (or Administrator).', '❌ Necesito los permisos **Gestionar canales** y **Gestionar roles** (o Administrador).'), flags: EPH });
     }
     if (running.has(g.id) || tpl.status(g.id).running) return i.reply({ content: L(lc, '⏳ The server is already being built.', '⏳ Ya se está haciendo el servidor.'), flags: EPH });
-    const id = i.options.getString('tipo') || 'comunidad';
-    if (!tpl.T[id]) return i.reply({ content: L(lc, 'Unknown type.', 'Tipo desconocido.'), flags: EPH });
+    const raw = i.options.getString('tipo');
+    const id = resolve(raw);
+    if (!id) {
+      const sug = POPULAR.filter((k) => tpl.T[k]).slice(0, 8).map((k) => label(k)).join(', ');
+      return i.reply({ content: L(lc, '❌ I found no type called “' + String(raw).slice(0, 60) + '”. Start typing in the **tipo** option and pick one from the list, e.g.: ' + sug, '❌ No encontré ningún tipo llamado «' + String(raw).slice(0, 60) + '». Empieza a escribir en la opción **tipo** y elige uno de la lista, por ejemplo: ' + sug), flags: EPH });
+    }
     return i.reply({ ...confirmView(lc, id, i.user.id, scan(g, i.member)), flags: EPH });
   },
 };
@@ -224,4 +263,4 @@ async function finish({ g, i, id, bk, result, job, lc, edit }) {
 
 function owns(i) { return !!(i.customId && String(i.customId).startsWith('hacer:')); }
 
-module.exports = { commands: [command], handleComponent, owns, scan };
+module.exports = { commands: [command], handleComponent, owns, scan, search, resolve };

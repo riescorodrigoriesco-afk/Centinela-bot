@@ -166,6 +166,9 @@ const T = {
   },
 };
 
+// Deportes y ligas (fútbol, boxeo, MMA, NBA, NFL, F1, tenis…): se generan en templates_deportes.js
+Object.assign(T, require('./templates_deportes').SPORTS);
+
 const LIST = () => Object.entries(T).map(([id, x]) => ({ id, ico: x.ico, name: x.n, desc: x.d, roles: 3 + x.roles.length + x.selfRoles.length + 2, channels: chanCount(x) }));
 function chanCount(x) {
   return [BASE_INFO, ...x.cats, BASE_SUPPORT, BASE_STAFF].reduce((n, c) => n + c.ch.length, 0);
@@ -349,7 +352,7 @@ async function run(g, id, opts, job) {
 
   /* ---- roles por botones ---- */
   if (specials.roles && roles.self.length) {
-    cfg.rolePanel = { ...cfg.rolePanel, channel: specials.roles.id, roles: roles.self.slice(0, 10).map((r) => r.id), mode: 'buttons', emojis: [], tempHours: 0, reactionMsg: null, reactionMap: {} };
+    cfg.rolePanel = { ...cfg.rolePanel, channel: specials.roles.id, roles: roles.self.slice(0, 25).map((r) => r.id), mode: 'buttons', emojis: [], tempHours: 0, reactionMsg: null, reactionMap: {} };
     if (created.has(specials.roles.id)) {
       try {
         const ex = require('./extras').mods.find((m) => m.id === 'rolepanel');

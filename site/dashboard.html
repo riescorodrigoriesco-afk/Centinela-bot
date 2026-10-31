@@ -167,7 +167,18 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     opt.appendChild(el('label',{class:'check'},[cl,el('span',{text:'Quitar los canales por defecto (#general, «Canales de texto»…) — solo si el servidor es nuevo'})]));
     m.appendChild(opt);
     var out=el('pre',{hidden:'hidden'});
+    var find=el('input',{type:'text',placeholder:'🔎 Buscar plantilla: LaLiga, Premier, boxeo, NBA, gaming, anime…',style:'margin-bottom:14px'});
+    var count=el('p',{class:'sub',style:'font-size:.85rem;margin:-6px 0 12px'});
+    m.appendChild(find);m.appendChild(count);
     var grid=el('div',{class:'grid'});m.appendChild(grid);m.appendChild(out);
+    var norm=function(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')};
+    var cards=[];
+    var filter=function(){
+      var ws=norm(find.value).split(/\s+/).filter(Boolean),n=0;
+      cards.forEach(function(c){var ok=ws.every(function(w){return c.hay.indexOf(w)>=0});c.node.style.display=ok?'':'none';if(ok)n++});
+      count.textContent=n+' de '+cards.length+' plantillas';
+    };
+    find.addEventListener('input',filter);
     api('GET','/api/templates').then(function(r){
       r.templates.forEach(function(t){
         var b=el('button',{class:'btn',text:'Aplicar',on:{click:function(ev){
@@ -182,14 +193,17 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
             },1500);
           }).catch(function(e){ev.target.disabled=false;out.textContent=e.message;toast(e.message,1)});
         }}});
-        grid.appendChild(el('div',{class:'card'},[el('h3',{text:t.ico+' '+t.name}),el('p',{class:'sub',style:'font-size:.9rem',text:t.desc}),el('p',{class:'sub',style:'font-size:.82rem',text:t.roles+' roles · '+t.channels+' canales'}),b]));
+        var node=el('div',{class:'card'},[el('h3',{text:t.ico+' '+t.name}),el('p',{class:'sub',style:'font-size:.9rem',text:t.desc}),el('p',{class:'sub',style:'font-size:.82rem',text:t.roles+' roles · '+t.channels+' canales'}),b]);
+        cards.push({node:node,hay:norm(t.name+' '+t.id+' '+t.desc)});
+        grid.appendChild(node);
       });
+      filter();
     }).catch(function(e){toast(e.message,1)});
   }
   function home(m){
     m.appendChild(el('h1',{text:G.name}));
     m.appendChild(el('p',{class:'sub',text:G.members+' miembros · '+G.mods.filter(function(x){return x.on}).length+' módulos activos'}));
-    m.appendChild(el('button',{class:'card modcard',style:'width:100%;margin-bottom:16px;border-color:#3fd0b0',on:{click:function(){cur='tpl';nav();show('tpl')}}},[el('h3',{text:'🧩 Plantillas de servidor'}),el('p',{class:'sub',style:'margin:0;font-size:.9rem',text:'Elige un tipo de servidor (gaming, comunidad, estudio, tienda…) y Centinela crea roles, canales, tickets, autoroles y bienvenidas por ti.'})]));
+    m.appendChild(el('button',{class:'card modcard',style:'width:100%;margin-bottom:16px;border-color:#3fd0b0',on:{click:function(){cur='tpl';nav();show('tpl')}}},[el('h3',{text:'🧩 Plantillas de servidor'}),el('p',{class:'sub',style:'margin:0;font-size:.9rem',text:'Elige un tipo de servidor (gaming, comunidad, ligas de fútbol, boxeo, NBA, F1…) y Centinela crea roles, canales, tickets, autoroles y bienvenidas por ti.'})]));
     m.appendChild(el('h3',{text:'Personaliza cada cosa',style:'color:#f4f7fb;margin:6px 0 10px'}));
     var mg=el('div',{class:'grid'});
     G.mods.forEach(function(x){
