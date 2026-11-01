@@ -14,6 +14,9 @@ const v = (name, o) => ({ k: 'voice', name, ...o });
 const TALK_BOTS = t('🤖' + SEP + 'comandos', 'Comandos de bots y minijuegos de Centinela', { sp: 'bots' });
 const ENG = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}'; // bandera de Inglaterra
 const FOUNDER = { name: 'Fundador', color: 0xf5b800, hoist: true, founder: true };
+// Sistema de fichajes (/fichaje): los presidentes ofrecen y venden; los jugadores sin equipo son «Agente libre»
+const PRES = { name: 'Presidente', color: 0x00b894, hoist: true };
+const FREE = { name: 'Agente libre', color: 0xb2bec3 };
 
 /* ============================ utilidades ============================ */
 // Círculo de color más parecido al color del equipo (para el rol y el canal)
@@ -61,9 +64,20 @@ function make(o) {
   if (o.teamCat && chanTeams.length) cats.push({ name: o.teamCat, ch: chanTeams.map((x) => t(x.e + SEP + slug(x.n), (o.teamTopic || 'Afición de ') + x.n)) });
   for (const [name, list] of o.cats || []) cats.push({ name, ch: list.map(hub) });
   cats.push({ name: '🔊 VOZ', ch: (o.voice || [['🔊 Charla'], ['💤 AFK']]).map(([nm, opt]) => v(nm, opt)) });
+  // Fichajes: el canal «fichajes» pasa a ser de anuncios oficiales (solo lectura) y se añade «mercado» para las ofertas con botones
+  const fich = !!o.fichajes && team.length >= 2;
+  if (fich) {
+    const hubCh = cats[0].ch;
+    const fc = t('🔁' + SEP + 'fichajes', 'Fichajes oficiales: altas, bajas y cesiones', { ro: true, sp: 'fichajes' });
+    const mc = t('📝' + SEP + 'mercado', 'Ofertas de fichaje (con botones), rumores y «busco equipo»: usa /fichaje', { sp: 'mercado' });
+    const k = hubCh.findIndex((c) => /fichajes|traspasos/.test(c.name));
+    if (k >= 0) hubCh.splice(k, 1, fc, mc); else hubCh.push(fc, mc);
+  }
+  const baseRoles = o.roles || [FOUNDER, ...(o.staff || [])];
   return {
     ico: o.ico, n: o.n, d: o.d, levels: o.levels !== false,
-    roles: o.roles || [FOUNDER, ...(o.staff || [])],
+    roles: fich ? [...baseRoles, PRES, FREE] : baseRoles,
+    fichajes: fich, teamRoleNames: team.map((x) => x.e + ' ' + x.n),
     selfRoles, rules: o.rules || rulesFan(o.rule5), ticketCats: o.ticketCats || TICKETS, cats,
   };
 }
@@ -74,8 +88,8 @@ const PRESS = { name: 'Periodista', color: 0x00cec9 };
 
 function league(o) {
   return make({
-    ico: o.ico, n: o.n, d: o.d || ('Servidor de la ' + o.short + ': un rol y un canal por equipo, jornada, fichajes, tácticas, quiniela y voz para ver los partidos.'),
-    staff: [REF, PRESS], teams: o.teams, teamCat: '🏟️ ' + o.teamWord, teamTopic: 'Afición de ',
+    ico: o.ico, n: o.n, d: o.d || ('Servidor de la ' + o.short + ': un rol y un canal por equipo, jornada, sistema de fichajes (/fichaje), tácticas, quiniela y voz para ver los partidos.'),
+    fichajes: true, staff: [REF, PRESS], teams: o.teams, teamCat: '🏟️ ' + o.teamWord, teamTopic: 'Afición de ',
     hubName: o.ico + ' ' + o.short.toUpperCase(),
     hub: [
       ['💬', 'general', 'Charla sobre ' + o.short],
@@ -150,6 +164,7 @@ const FOOTBALL = {
 
 // Champions League: los grandes de Europa
 FOOTBALL.champions = make({
+  fichajes: true,
   ico: '🏆', n: 'Champions League / Europa', d: 'Servidor de las competiciones europeas: un rol y canal por gran club, una sala por fase, quiniela y voz para ver los partidos.',
   staff: [REF, PRESS], teamCat: '🏟️ CLUBES DE EUROPA', teamTopic: 'Afición de ',
   teams: [['Real Madrid', 0xe8e8e8], ['FC Barcelona', 0xa50044], ['Bayern Múnich', 0xdc052d], ['Manchester City', 0x6cabdd], ['Liverpool', 0xc8102e], ['París Saint-Germain', 0x004170], ['Inter', 0x0e4b99], ['Milan', 0xfb090b], ['Juventus', 0x1c1c1c], ['Borussia Dortmund', 0xfde100], ['Atlético de Madrid', 0xcb3524], ['Arsenal', 0xef0107], ['Chelsea', 0x034694], ['Manchester United', 0xda291c], ['Napoli', 0x12a0d7], ['Benfica', 0xe30613], ['Oporto', 0x003c8f], ['Ajax', 0xd2122e], ['Bayer Leverkusen', 0xe32221], ['Tottenham', 0x132257], ['Atalanta', 0x1e71b8], ['Sporting CP', 0x008a4b], ['Roma', 0x970a2c], ['RB Leipzig', 0xdd0741]],
@@ -343,6 +358,7 @@ SPORTS.lucha = make({
 
 const NBA = [['Lakers', 0x552583], ['Celtics', 0x007a33], ['Warriors', 0x1d428a], ['Bulls', 0xce1141], ['Heat', 0x98002e], ['Knicks', 0xf58426], ['Nets', 0x2b2b2b], ['Spurs', 0xc4ced4], ['Mavericks', 0x00538c], ['Suns', 0xe56020], ['Bucks', 0x00471b], ['76ers', 0x006bb6], ['Nuggets', 0xfec524], ['Clippers', 0xc8102e], ['Rockets', 0xce1141], ['Thunder', 0x007ac1], ['Cavaliers', 0x860038], ['Raptors', 0xce1141], ['Grizzlies', 0x5d76a9], ['Timberwolves', 0x236192], ['Pacers', 0xfdbb30], ['Hawks', 0xe03a3e], ['Kings', 0x5a2d81], ['Magic', 0x0077c0]];
 SPORTS.nba = make({
+  fichajes: true,
   ico: '🏀', n: 'NBA', d: 'Servidor de la NBA: un rol y un canal por equipo, partidos de hoy, draft, traspasos, fantasy y voz.',
   staff: [REF, PRESS], teams: NBA, post: [['🏀 Otro equipo', 0x95a5a6]], teamCat: '🏟️ EQUIPOS', teamTopic: 'Afición de los ',
   hubName: '🏀 NBA',
@@ -406,6 +422,7 @@ SPORTS.nfl = make({
 });
 
 SPORTS.mlb = make({
+  fichajes: true,
   ico: '⚾', n: 'Béisbol (MLB)', d: 'Servidor de béisbol: un rol y canal por equipo de las Grandes Ligas, resultados, traspasos, fantasy y Serie Mundial.',
   staff: [REF, PRESS],
   teams: [['Yankees', 0x0c2340], ['Dodgers', 0x005a9c], ['Red Sox', 0xbd3039], ['Cubs', 0x0e3386], ['Cardinals', 0xc41e3a], ['Giants', 0xfd5a1e], ['Braves', 0xce1141], ['Astros', 0xeb6e1f], ['Mets', 0xff5910], ['Phillies', 0xe81828], ['Padres', 0x8c6a3d], ['Blue Jays', 0x134a8e], ['Mariners', 0x005c5c], ['Rangers', 0x003278], ['Orioles', 0xdf4601], ['Guardians', 0xe31937], ['Tigers', 0x0c2340], ['Twins', 0x002b5c], ['Brewers', 0x12284b], ['Diamondbacks', 0xa71930], ['Rays', 0x092c5c], ['Angels', 0xba0021], ['White Sox', 0x2b2b2b], ['Reds', 0xc6011f], ['Royals', 0x004687]],

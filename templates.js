@@ -419,6 +419,17 @@ async function run(g, id, opts, job) {
     } else log('🎫 Tickets configurados (el canal ya existía: publica el panel desde Tickets).');
   }
 
+  /* ---- fichajes (ligas): equipos, presidentes, agentes libres y canales de anuncios y ofertas ---- */
+  if (tpl.fichajes && specials.fichajes) {
+    try {
+      const teamIds = roles.self.filter((r) => (tpl.teamRoleNames || []).includes(r.name)).map((r) => r.id);
+      const pres = roles.extra.find((r) => r.name === 'Presidente');
+      const free = roles.extra.find((r) => r.name === 'Agente libre');
+      require('./fichajes').setup(g, { announce: specials.fichajes.id, market: (specials.mercado || specials.fichajes).id, manager: pres && pres.id, free: free && free.id, teams: teamIds });
+      log('🔁 Fichajes listos: ' + teamIds.length + ' equipos · anuncios en #' + specials.fichajes.name + (specials.mercado ? ' · ofertas en #' + specials.mercado.name : '') + ' · da el rol @Presidente a quien dirija un equipo y usad /fichaje');
+    } catch (e) { log('  ❌ Fichajes: ' + e.message); }
+  }
+
   /* ---- antiraid y registros ---- */
   if (opts.antiraid !== false) {
     try {
