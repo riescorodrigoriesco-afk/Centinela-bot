@@ -170,4 +170,4 @@ async function selfTest() {
   }
 }
 
-module.exports = { make, selfTest, clean, wrap, lastError: () => lastError };
+module.exports = { make, selfTest, clean, wrap, loadFonts, canvasLib: () => canvasLib, FAMILY, lastError: () => lastError };

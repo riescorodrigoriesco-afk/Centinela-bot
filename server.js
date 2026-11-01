@@ -348,6 +348,8 @@ async function startBot() {
       try {
         require('./card').selfTest().then((r) => log('[tarjeta] ' + (r.ok ? 'imagen de bienvenida OK · fuentes propias=' + r.fonts + ' · ' + r.lit + ' px de texto · PNG ' + r.png + ' B' : '⚠️ PROBLEMA: ' + r.why))).catch((e) => log('[tarjeta] error en la prueba: ' + e.message));
       } catch (e) { log('[tarjeta] ' + e.message); }
+      // Banner del perfil del bot: solo lo pone si todavía no tiene uno
+      try { require('./banner').ensure(c).catch((e) => log('[banner] ' + e.message)); } catch (e) { log('[banner] ' + e.message); }
     };
 
     botMod.attach(c);
