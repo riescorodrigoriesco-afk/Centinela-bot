@@ -713,6 +713,10 @@ app.post('/api/guild/:id/template', dashAuth, wrap(async (req, res) => {
 }));
 app.get('/api/guild/:id/template/status', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(tplMod.status(g.id)); }));
 app.post('/api/guild/:id/install', dashAuth, wrap(async (req, res) => { const g = await guildOf(req, res); if (g) res.json(await uiMod.webInstall(g, (req.body || {}).ids)); }));
+// Gestionar el servidor desde la web: borrar roles/canales, banear, desbanear, dar y quitar roles
+try {
+  app.use('/api/guild/:id/manage', require('./manage').router(express, { dashAuth, guildOf }));
+} catch (e) { console.log('[gestionar] no se pudo cargar: ' + e.message); }
 
 app.listen(PORT, () => {
   console.log('Panel listo en el puerto ' + PORT);

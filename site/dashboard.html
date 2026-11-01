@@ -39,6 +39,22 @@ button.modcard{text-align:left;cursor:pointer;color:inherit;font:inherit;margin:
 button.modcard:hover,.srvcard:hover{border-color:var(--ok)}
 .srvcard .btn{display:inline-block;text-decoration:none;margin-top:6px}
 pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.list{border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:10px 0}
+.scroll{max-height:55vh;overflow:auto}
+.li{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--deep);margin:0;cursor:pointer}
+.li:last-child{border-bottom:0}
+.li.off{opacity:.5;cursor:not-allowed}
+.li .grow{flex:1;min-width:0;overflow-wrap:anywhere}
+.li input[type=checkbox]{width:18px;height:18px;accent-color:var(--bad);flex:none}
+.sw{width:12px;height:12px;border-radius:50%;flex:none}
+.chip{display:inline-flex;align-items:center;gap:2px;background:#16294a;border:1px solid var(--line);border-radius:999px;padding:2px 4px 2px 10px;font-size:.82rem;margin:2px 4px 2px 0}
+.chip button{background:none;border:0;color:var(--mute);cursor:pointer;font-size:1rem;line-height:1;padding:0 6px}
+.chip button:hover{color:var(--bad)}
+.av{width:40px;height:40px;border-radius:50%;background:var(--line);flex:none;object-fit:cover}
+.mini{padding:6px 12px;font-size:.85rem}
+.tag{font-size:.7rem;background:var(--line);border-radius:6px;padding:1px 6px;margin-left:6px;vertical-align:middle}
 @media(max-width:760px){.app{grid-template-columns:1fr}aside{position:static;max-height:none}main{padding:18px}}
 </style>
 </head>
@@ -143,6 +159,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     var n=$('#nav');n.innerHTML='';
     n.appendChild(item('home','🏠','Inicio e instalación',null));
     n.appendChild(item('tpl','🧩','Plantillas de servidor',null));
+    n.appendChild(item('manage','🛠️','Gestionar servidor',null));
     G.mods.forEach(function(m){n.appendChild(item(m.id,m.ico,m.n,m.on))});
   }
   function item(id,ico,name,on){
@@ -154,6 +171,7 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
     var m=$('#main');m.innerHTML='';
     if(id==='home')return home(m);
     if(id==='tpl')return tplView(m);
+    if(id==='manage')return manageView(m);
     var mod=G.mods.find(function(x){return x.id===id});if(mod)modView(m,mod);
   }
 
@@ -201,10 +219,213 @@ pre{white-space:pre-wrap;background:var(--night);padding:12px;border-radius:8px;
       filter();
     }).catch(function(e){toast(e.message,1)});
   }
+
+  /* ===== Gestionar servidor: miembros, roles, canales y baneos ===== */
+  var MG=null;
+  function mapi(m,path,b){return api(m,'/api/guild/'+G.id+'/manage'+path,b)}
+  function nrm(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')}
+  function hexOk(c){return /^#[0-9a-f]{6}$/i.test(c||'')?c:'#99aab5'}
+  function overview(force){
+    if(!force&&MG&&MG.id===G.id)return Promise.resolve(MG);
+    return mapi('GET','/overview').then(function(o){MG=o;return o});
+  }
+  function act(path,body,ok,btn){
+    if(btn)btn.disabled=true;
+    return mapi('POST',path,body).then(function(r){toast(r.note||'Hecho');if(ok)ok(r)}).catch(function(e){toast(e.message,1)}).then(function(){if(btn)btn.disabled=false});
+  }
+  function manageView(m){
+    MG=null;
+    m.appendChild(el('h1',{text:'🛠️ Gestionar servidor'}));
+    m.appendChild(el('p',{class:'sub',text:'Borra roles y canales, banea o desbanea y da roles sin abrir Discord. Funciona con tus permisos de Discord (no puedes hacer aquí nada que no puedas hacer allí) y todo queda anotado en el registro de moderación y en el registro de auditoría.'}));
+    var bar=el('div',{class:'tabs'});var body=el('div');
+    m.appendChild(bar);m.appendChild(body);
+    var defs=[['mem','👥 Miembros',tabMembers],['rol','🏷️ Roles',tabRoles],['can','📁 Canales',tabChannels],['ban','🔨 Baneos',tabBans]];
+    function go(k){
+      bar.innerHTML='';body.innerHTML='';
+      defs.forEach(function(d){bar.appendChild(el('button',{class:'btn'+(d[0]===k?'':' sec'),text:d[1],on:{click:function(){go(d[0])}}}))});
+      defs.filter(function(d){return d[0]===k})[0][2](body);
+    }
+    go('mem');
+  }
+
+  /* Lista con casillas para borrar varios a la vez */
+  function checklist(items,find,info,unit){
+    var box=el('div',{class:'list scroll'});var rows=[];
+    var upd=function(){var n=rows.filter(function(r){return r.cb.checked&&!r.cb.disabled}).length;info.textContent=n+' seleccionados · '+rows.length+' '+unit+' en total'};
+    items.forEach(function(it){
+      var cb=el('input',{type:'checkbox'});if(!it.ok)cb.disabled=true;
+      var lead=it.color!==undefined?el('span',{class:'sw',style:'background:'+hexOk(it.color)}):el('span',{text:it.icon||'',style:'width:20px;text-align:center;flex:none'});
+      var row=el('label',{class:'li'+(it.ok?'':' off'),title:it.ok?'':(it.why||'No se puede borrar'),style:it.indent?'padding-left:'+(12+it.indent*24)+'px':''},[cb,lead,el('span',{class:'grow',text:it.name+(it.ok?'':'  🔒')})]);
+      cb.addEventListener('change',upd);
+      rows.push({it:it,cb:cb,row:row,hay:nrm(it.name)});box.appendChild(row);
+    });
+    var flt=function(){var ws=nrm(find.value).split(/\s+/).filter(Boolean);rows.forEach(function(r){r.row.style.display=ws.every(function(w){return r.hay.indexOf(w)>=0})?'':'none'})};
+    find.addEventListener('input',flt);
+    upd();
+    return {
+      node:box,
+      selected:function(){return rows.filter(function(r){return r.cb.checked&&!r.cb.disabled}).map(function(r){return r.it})},
+      clear:function(){rows.forEach(function(r){r.cb.checked=false});upd()},
+      markVisible:function(on){rows.forEach(function(r){if(!r.cb.disabled&&r.row.style.display!=='none')r.cb.checked=on});upd()}
+    };
+  }
+  /* Borra uno por uno (así se ve el avance y no hay cortes por tiempo) */
+  function bulkDelete(sel,unit,path,key,extra,out,done){
+    var n=sel.length,i=0,okc=0,errs=[];
+    out.hidden=false;out.textContent='';
+    (function next(){
+      if(i>=n||(errs.length>=5&&okc===0)){
+        out.textContent=okc+' de '+n+' '+unit+' borrados.'+(errs.length?'\n\nNo se pudo:\n'+errs.join('\n'):'')+(i<n?'\n\nParé porque todos fallan; revisa el aviso de arriba.':'');
+        toast('Borrados: '+okc+' de '+n+(errs.length?' · '+errs.length+' con error':''),errs.length>0&&okc===0);done(out.textContent);return;
+      }
+      var it=sel[i++];out.textContent='Borrando '+i+'/'+n+': '+it.name+'…';
+      var b={};b[key]=it.id;for(var k in extra)b[k]=extra[k];
+      mapi('POST',path,b).then(function(){okc++}).catch(function(e){if(/ya no existe/.test(e.message))okc++;else errs.push('• '+it.name+': '+e.message)}).then(next);
+    })();
+  }
+  function listCard(b,title,hint,placeholder,items,unit,delPath,delKey,extraFn,afterDone){
+    var find=el('input',{type:'text',placeholder:placeholder});
+    var info=el('p',{class:'sub',style:'font-size:.85rem;margin:8px 0'});
+    var out=el('pre',{hidden:'hidden'});
+    var cl=checklist(items,find,info,unit);
+    var del=el('button',{class:'btn bad',text:'🗑️ Borrar seleccionados'});
+    del.addEventListener('click',function(){
+      var sel=cl.selected();if(!sel.length)return toast('Marca primero lo que quieras borrar.',1);
+      var names=sel.slice(0,12).map(function(x){return '• '+x.name}).join('\n')+(sel.length>12?'\n… y '+(sel.length-12)+' más':'');
+      if(!confirm('¿Borrar '+sel.length+' '+unit+' de «'+G.name+'»?\n\n'+names+'\n\nEsto NO se puede deshacer.'))return;
+      del.disabled=true;
+      bulkDelete(sel,unit,delPath,delKey,extraFn?extraFn():{},out,function(txt){del.disabled=false;overview(true).then(function(){afterDone(txt)}).catch(function(e){toast(e.message,1)})});
+    });
+    b.appendChild(el('div',{class:'card'},[el('h3',{text:title}),el('p',{class:'sub',style:'font-size:.9rem',text:hint}),find,info,cl.node,
+      el('div',{class:'row'},[del,el('button',{class:'btn sec',text:'Marcar los visibles',on:{click:function(){cl.markVisible(true)}}}),el('button',{class:'btn sec',text:'Desmarcar todo',on:{click:function(){cl.clear()}}})]),out]));
+    return cl;
+  }
+
+  function tabRoles(b,prev){
+    b.appendChild(el('p',{class:'sub',text:'Cargando roles…'}));
+    overview(true).then(function(ov){
+      b.innerHTML='';
+      if(prev)b.appendChild(el('pre',{text:prev}));
+      var items=ov.roles.map(function(r){return {id:r.id,name:r.name,color:r.color||'#99aab5',ok:r.deletable,why:r.why}});
+      listCard(b,'🏷️ Roles ('+ov.roles.length+')','Marca los roles que quieras borrar. Los que llevan 🔒 no se pueden: pasa el ratón para ver por qué (suelen estar por encima del rol de Centinela). Al borrar un rol, todos los miembros lo pierden.','🔎 Buscar rol…',items,'roles','/role/delete','roleId',null,function(t){b.innerHTML='';tabRoles(b,t)});
+    }).catch(function(e){b.innerHTML='';b.appendChild(el('p',{class:'err',text:e.message}))});
+  }
+
+  function tabChannels(b,prev){
+    b.appendChild(el('p',{class:'sub',text:'Cargando canales…'}));
+    overview(true).then(function(ov){
+      b.innerHTML='';
+      if(prev)b.appendChild(el('pre',{text:prev}));
+      var ICON={text:'#',voice:'🔊',category:'📁',news:'📢',stage:'🎙️',forum:'💬'};
+      var items=ov.channels.map(function(c){return {id:c.id,name:c.name,icon:ICON[c.kind]||'#',indent:c.parentId?1:0,ok:c.deletable,why:c.why,kind:c.kind}});
+      var kids=el('input',{type:'checkbox'});
+      b.appendChild(el('div',{class:'card'},[el('label',{class:'check'},[kids,el('span',{text:'Al borrar una categoría, borrar también los canales de dentro (si no, los canales se quedan sueltos)'})])]));
+      var cl=listCard(b,(function(){var nc=ov.channels.filter(function(c){return c.kind==='category'}).length,nn=ov.channels.length-nc;return '📁 Canales ('+nn+(nn===1?' canal · ':' canales · ')+nc+(nc===1?' categoría)':' categorías)')})(),'Marca lo que quieras borrar. Primero se borran los canales y al final las categorías.','🔎 Buscar canal o categoría…',items,'canales','/channel/delete','channelId',function(){return {children:kids.checked}},function(t){b.innerHTML='';tabChannels(b,t)});
+    }).catch(function(e){b.innerHTML='';b.appendChild(el('p',{class:'err',text:e.message}))});
+  }
+
+  function memberCard(mm,ov){
+    var byId={};ov.roles.forEach(function(r){byId[r.id]=r});
+    var chips=el('div',{style:'margin:6px 0'});
+    var sel=el('select',{style:'max-width:280px'});
+    var addBtn=el('button',{class:'btn sec mini',text:'➕ Dar rol'});
+    var card=el('div',{class:'card'});
+    function paint(){
+      chips.innerHTML='';
+      mm.roles.forEach(function(id){
+        var r=byId[id];if(!r)return;
+        var x=r.deletable?el('button',{title:'Quitar este rol',text:'×'}):null;
+        if(x)x.addEventListener('click',function(){act('/role/remove',{userId:mm.id,roleId:id},function(res){mm.roles=res.roles;paint()},x)});
+        chips.appendChild(el('span',{class:'chip',style:'border-left:4px solid '+hexOk(r.color)},[document.createTextNode(r.name+' '),x]));
+      });
+      if(!mm.roles.length)chips.appendChild(el('span',{class:'sub',style:'font-size:.85rem',text:'Sin roles'}));
+      sel.innerHTML='';sel.appendChild(el('option',{value:'',text:'— elegir un rol para dar —'}));
+      ov.roles.filter(function(r){return r.deletable&&mm.roles.indexOf(r.id)<0}).forEach(function(r){sel.appendChild(el('option',{value:r.id,text:r.name}))});
+    }
+    addBtn.addEventListener('click',function(){
+      if(!sel.value)return toast('Elige primero el rol.',1);
+      act('/role/give',{userId:mm.id,roleId:sel.value},function(res){mm.roles=res.roles;paint()},addBtn);
+    });
+    var kick=el('button',{class:'btn sec mini',text:'👢 Expulsar'});
+    var ban=el('button',{class:'btn bad mini',text:'🔨 Banear'});
+    if(!mm.canKick){kick.disabled=true;kick.title=mm.self?'No puedes expulsarte a ti':mm.owner?'Es el dueño del servidor':mm.me?'Soy yo':'Su rol está por encima del tuyo o del de Centinela'}
+    if(!mm.canBan){ban.disabled=true;ban.title=mm.self?'No puedes banearte a ti':mm.owner?'Es el dueño del servidor':mm.me?'Soy yo':'Su rol está por encima del tuyo o del de Centinela'}
+    kick.addEventListener('click',function(){
+      var why=prompt('Expulsar a '+mm.name+' de «'+G.name+'».\nMotivo (opcional, queda en el registro de Discord):','');if(why===null)return;
+      act('/kick',{userId:mm.id,reason:why},function(){card.remove()},kick);
+    });
+    ban.addEventListener('click',function(){
+      var why=prompt('Banear a '+mm.name+' de «'+G.name+'».\nMotivo (opcional, queda en el registro de Discord):','');if(why===null)return;
+      act('/ban',{userId:mm.id,reason:why},function(){card.remove()},ban);
+    });
+    var head=el('div',{class:'row',style:'flex-wrap:nowrap'},[
+      mm.avatar?el('img',{class:'av',src:mm.avatar,alt:''}):el('span',{class:'av'}),
+      el('div',{style:'flex:1;min-width:0;overflow-wrap:anywhere'},[el('strong',{style:'color:#f4f7fb',text:mm.name}),mm.bot?el('span',{class:'tag',text:'BOT'}):null,mm.owner?el('span',{class:'tag',text:'DUEÑO'}):null,el('div',{class:'sub',style:'font-size:.8rem;margin:0',text:mm.tag+' · '+mm.id})])]);
+    card.appendChild(head);card.appendChild(chips);
+    card.appendChild(el('div',{class:'row',style:'margin-top:8px'},[sel,addBtn,kick,ban]));
+    paint();
+    return card;
+  }
+  function tabMembers(b){
+    var q=el('input',{type:'text',placeholder:'Nombre, apodo o ID del miembro…'});
+    var go=el('button',{class:'btn',text:'Buscar'});
+    var note=el('p',{class:'sub',style:'font-size:.88rem;margin:10px 0 0'});
+    var res=el('div');
+    b.appendChild(el('div',{class:'card'},[el('div',{class:'row'},[el('div',{style:'flex:1;min-width:220px'},[q]),go]),note]));
+    b.appendChild(res);
+    function search(){
+      note.textContent='Buscando…';
+      Promise.all([overview(false),mapi('GET','/members?q='+encodeURIComponent(q.value.trim()))]).then(function(r){
+        note.textContent=r[1].note||(r[1].members.length+' resultado'+(r[1].members.length===1?'':'s'));
+        res.innerHTML='';r[1].members.forEach(function(mm){res.appendChild(memberCard(mm,r[0]))});
+      }).catch(function(e){note.textContent='';toast(e.message,1)});
+    }
+    go.addEventListener('click',search);
+    q.addEventListener('keydown',function(e){if(e.key==='Enter')search()});
+    search();
+  }
+
+  function tabBans(b){
+    var idIn=el('input',{type:'text',placeholder:'ID del usuario a banear (aunque no esté en el servidor)'});
+    var why=el('input',{type:'text',placeholder:'Motivo (opcional)',style:'margin-top:8px'});
+    var days=el('select',{style:'margin-top:8px'});
+    [['0','No borrar sus mensajes'],['1','Borrar sus mensajes del último día'],['7','Borrar sus mensajes de los últimos 7 días']].forEach(function(o){days.appendChild(el('option',{value:o[0],text:o[1]}))});
+    var banBtn=el('button',{class:'btn bad',text:'🔨 Banear por ID',style:'margin-top:10px'});
+    var q=el('input',{type:'text',placeholder:'🔎 Buscar baneado por nombre, ID o motivo…'});
+    var info=el('p',{class:'sub',style:'font-size:.85rem;margin:8px 0'});
+    var list=el('div',{class:'list scroll'});
+    b.appendChild(el('div',{class:'card'},[el('h3',{text:'Banear por ID'}),idIn,why,days,banBtn]));
+    b.appendChild(el('div',{class:'card'},[el('h3',{text:'Usuarios baneados'}),q,info,list]));
+    function load(){
+      info.textContent='Cargando…';
+      mapi('GET','/bans?q='+encodeURIComponent(q.value.trim())).then(function(r){
+        info.textContent=r.total+' baneados en total'+(r.truncated?' (Discord solo me deja ver los primeros 1000)':'')+(q.value.trim()?' · mostrando '+r.bans.length:'');
+        list.innerHTML='';
+        if(!r.bans.length)list.appendChild(el('div',{class:'li',style:'cursor:default'},[el('span',{class:'grow sub',text:'Nada que mostrar.'})]));
+        r.bans.forEach(function(x){
+          var un=el('button',{class:'btn sec mini',text:'✅ Desbanear'});
+          un.addEventListener('click',function(){
+            if(!confirm('¿Desbanear a '+x.tag+'?'))return;
+            act('/unban',{userId:x.id},function(){load()},un);
+          });
+          list.appendChild(el('div',{class:'li',style:'cursor:default'},[el('div',{class:'grow'},[el('div',{style:'color:#f4f7fb',text:x.tag+(x.bot?'  🤖':'')}),el('div',{class:'sub',style:'font-size:.8rem;margin:0',text:x.id+(x.reason?' · '+x.reason:'')})]),un]));
+        });
+      }).catch(function(e){info.textContent='';list.innerHTML='';list.appendChild(el('div',{class:'li err',style:'cursor:default',text:e.message}))});
+    }
+    var t=null;q.addEventListener('input',function(){clearTimeout(t);t=setTimeout(load,350)});
+    banBtn.addEventListener('click',function(){
+      var id=idIn.value.trim();if(!/^\d{15,25}$/.test(id))return toast('Escribe un ID de usuario válido (solo números).',1);
+      if(!confirm('¿Banear al usuario con ID '+id+' de «'+G.name+'»?'))return;
+      act('/ban',{userId:id,reason:why.value,days:days.value},function(){idIn.value='';why.value='';load()},banBtn);
+    });
+    load();
+  }
+
   function home(m){
     m.appendChild(el('h1',{text:G.name}));
     m.appendChild(el('p',{class:'sub',text:G.members+' miembros · '+G.mods.filter(function(x){return x.on}).length+' módulos activos'}));
     m.appendChild(el('button',{class:'card modcard',style:'width:100%;margin-bottom:16px;border-color:#3fd0b0',on:{click:function(){cur='tpl';nav();show('tpl')}}},[el('h3',{text:'🧩 Plantillas de servidor'}),el('p',{class:'sub',style:'margin:0;font-size:.9rem',text:'Elige un tipo de servidor (gaming, comunidad, ligas de fútbol, boxeo, NBA, F1…) y Centinela crea roles, canales, tickets, autoroles y bienvenidas por ti.'})]));
+    m.appendChild(el('button',{class:'card modcard',style:'width:100%;margin-bottom:16px',on:{click:function(){cur='manage';nav();show('manage')}}},[el('h3',{text:'🛠️ Gestionar servidor'}),el('p',{class:'sub',style:'margin:0;font-size:.9rem',text:'Borra roles y canales, banea y desbanea, da y quita roles a tus miembros, todo desde la web.'})]));
     m.appendChild(el('h3',{text:'Personaliza cada cosa',style:'color:#f4f7fb;margin:6px 0 10px'}));
     var mg=el('div',{class:'grid'});
     G.mods.forEach(function(x){

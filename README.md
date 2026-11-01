@@ -98,6 +98,13 @@ El comando principal es `/help`: abre un menú con la tabla de comandos y funcio
 
 `/dashboard.html` permite configurar todos los módulos de cada servidor desde el navegador: instalar, activar/desactivar, valores, filtros, canales, roles y autoroles.
 
+**🛠️ Gestionar servidor (`manage.js`).** En el menú de cada servidor, «Gestionar servidor» deja hacer desde la web lo mismo que harías en Discord:
+- **Miembros:** buscar por nombre o ID, dar y quitar roles (etiquetas con ×), expulsar y banear (con motivo).
+- **Roles y Canales:** listas con buscador y casillas para borrar varios de una vez; en Canales, opción de borrar también lo que hay dentro de una categoría. Los que no se pueden salen con 🔒 y el motivo (rol de otro bot, por encima del rol de Centinela, canal obligatorio de la comunidad…).
+- **Baneos:** ver y buscar baneados, desbanear y banear por ID (aunque la persona no esté en el servidor), con opción de borrar sus mensajes de 1 o 7 días.
+
+Reglas: el panel **nunca da más poder del que ya tienes en Discord**. El dueño del servidor puede con todo lo que el propio bot pueda; los demás (también el creador del bot) necesitan el permiso real (Banear / Expulsar / Gestionar roles / Gestionar canales) y un rol por encima del miembro o rol afectado, así que el creador del bot no puede usar esto en servidores ajenos donde no tenga permisos. Además hay que cumplir lo de siempre del panel (con «máxima seguridad» solo entran el dueño y la lista de confianza). No se puede banear al dueño, a Centinela ni a uno mismo. Las acciones llevan el motivo `Panel web · nombre (id)` en el registro de auditoría de Discord, se anotan en el registro de moderación (`/logs add mod`) y, como las hace el propio Centinela (que es de confianza), no activan el anti-nuke. Las peticiones que no salgan del propio panel se rechazan. Para que funcione, el rol de Centinela debe estar **por encima** de los roles que quieras gestionar y tener Gestionar roles / canales y Banear miembros.
+
 ## Funciones extra
 
 Palabras prohibidas, tickets (botón → canal privado), roles por botones, niveles (`$rank`, `$top`) y autoroles. Se configuran en `/help` → Ajustes o en `/panel/dashboard.html`.
