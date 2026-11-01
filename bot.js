@@ -475,6 +475,15 @@ async function greetChannel(guild, id) {
   return ch && ch.isTextBased() && !ch.isDMBased() ? ch : null;
 }
 
+/* Canal por si la bienvenida está activada pero sin canal (o su canal se borró): uno con nombre de bienvenida/despedida,
+ * si no el de avisos del servidor, si no el «general». Solo canales de texto donde el bot puede escribir. */
+const GREET_RE = { welcome: /bienvenid|welcome|llegad|entrad/i, goodbye: /despedid|goodbye|salid|adi[oó]s|\bbye\b/i };
+function autoGreetChannel(guild, kind) {
+  const ok = (c) => c && (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement) && !greetMissing(guild, c, false).length;
+  const texts = [...guild.channels.cache.values()].filter(ok);
+  return texts.find((c) => GREET_RE[kind].test(c.name)) || (ok(guild.systemChannel) ? guild.systemChannel : null) || texts.find((c) => /general|chat/i.test(c.name)) || null;
+}
+
 /* Manda la bienvenida o la despedida. opts.test = ignora que esté desactivada (la prueba de /bienvenida probar).
  * Devuelve { ok, channel, image, error, dm } y deja el último resultado en greetState (los fallos ya no se tragan en silencio). */
 async function sendGreeting(kind, member, opts = {}) {
@@ -499,9 +508,15 @@ async function sendGreeting(kind, member, opts = {}) {
 
     // canal: el configurado; si ya no existe, el de avisos del sistema
     let ch = await greetChannel(guild, g.channel);
-    if (!ch && g.channel) {
-      ch = await greetChannel(guild, guild.systemChannelId);
-      if (ch) console.log('[' + kind + '] el canal configurado ya no existe en ' + guild.name + ': uso #' + ch.name);
+    if (!ch) {
+      // sin canal o con el canal borrado: se busca uno razonable y se guarda para que /bienvenida lo enseñe
+      const alt = autoGreetChannel(guild, kind);
+      if (alt) {
+        console.log('[' + kind + '] ' + guild.name + ': ' + (g.channel ? 'el canal configurado ya no existe' : 'estaba activada sin canal') + ' → uso #' + alt.name + ' y lo guardo');
+        g.channel = alt.id;
+        saveCfg();
+        ch = alt;
+      }
     }
     if (!ch) {
       res.error = g.channel ? 'El canal configurado ya no existe (vuelve a elegirlo).' : 'No hay canal configurado.';

@@ -239,7 +239,7 @@ const MODS = [
       { k: 'dmmessage', path: ['welcome', 'dmMessage'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Private message (empty = default)', 'Mensaje privado (vacío = por defecto)'] },
     ],
     acts: [{ key: 'test', n: ['Send a test now', 'Enviar una prueba ahora'], run: greetTest('welcome') }],
-    pickers: [{ key: 'channel', type: 'channel', n: ['Welcome channel', 'Canal de bienvenida'], set: (c, v) => { c.welcome.channel = v[0]; c.welcome.enabled = true; }, show: (c) => (c.welcome.channel ? '<#' + c.welcome.channel + '>' : '—') }],
+    pickers: [{ key: 'channel', type: 'channel', n: ['Welcome channel', 'Canal de bienvenida'], set: (c, v) => { if (v[0]) { c.welcome.channel = v[0]; c.welcome.enabled = true; } }, show: (c) => (c.welcome.channel ? '<#' + c.welcome.channel + '>' : '—') }],
   },
   {
     id: 'goodbye', ico: '😢', n: ['Goodbye', 'Despedida'], d: ['Message and image when someone leaves. Variables: {username} {server} {count}', 'Mensaje e imagen cuando alguien se va. Variables: {username} {server} {count}'],
@@ -259,7 +259,7 @@ const MODS = [
       { k: 'dmmessage', path: ['goodbye', 'dmMessage'], t: 'str', long: true, optional: true, min: 0, max: 800, l: ['Private message (empty = default)', 'Mensaje privado (vacío = por defecto)'] },
     ],
     acts: [{ key: 'test', n: ['Send a test now', 'Enviar una prueba ahora'], run: greetTest('goodbye') }],
-    pickers: [{ key: 'channel', type: 'channel', n: ['Goodbye channel', 'Canal de despedida'], set: (c, v) => { c.goodbye.channel = v[0]; c.goodbye.enabled = true; }, show: (c) => (c.goodbye.channel ? '<#' + c.goodbye.channel + '>' : '—') }],
+    pickers: [{ key: 'channel', type: 'channel', n: ['Goodbye channel', 'Canal de despedida'], set: (c, v) => { if (v[0]) { c.goodbye.channel = v[0]; c.goodbye.enabled = true; } }, show: (c) => (c.goodbye.channel ? '<#' + c.goodbye.channel + '>' : '—') }],
   },
   {
     id: 'trust', ico: '🤝', n: ['Trusted list', 'Lista de confianza'], d: ['Trusted users skip the protections; exempt channels are ignored', 'Los usuarios de confianza se saltan las protecciones; los canales exentos se ignoran'],
