@@ -23,6 +23,7 @@ El dueño del servidor, el creador del bot (`BOT_OWNER_IDS` o el dueño de la ap
 
 - **Protección:** `/antiraid status|toggle|tune|whitelist`, `/panic`, `/logs add|remove|list`, `/welcome`, `/goodbye`
 - **Moderación:** `/purge`, `/lock`, `/unlock`, `/isolate`, `/ban`, `/kick` — y con prefijo: `!purge`, `!lock`, `!unlock`, `!aislamiento`
+- **Desbanear:** `/unban` (en español `/desbanear`): al escribir en `usuario` sale la lista de baneados (busca por nombre, ID o motivo; también vale pegar un ID o una mención) y `motivo` es opcional. Hace falta el permiso «Banear miembros» (tanto para quien lo usa como para Centinela); queda en el registro de moderación. También con prefijo (`$unban <id>`) y desde el panel web (Gestionar servidor → Baneos).
 - **Juegos y economía:** `/coinflip` `/dice` `/rps` `/slots` `/hilo` `/trivia` `/tictactoe` `/8ball` · `/daily` `/work` `/balance` `/leaderboard`
 - **Info:** `/serverinfo` `/userinfo` `/ping` `/help`
 
