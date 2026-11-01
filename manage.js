@@ -14,7 +14,7 @@ const bot = require('./bot');
 const ID = /^\d{15,25}$/;
 const HEX = /^#[0-9a-f]{6}$/i;
 const fail = (m) => { throw new Error(m); };
-const PERM_NAME = { BanMembers: 'Banear miembros', KickMembers: 'Expulsar miembros', ManageRoles: 'Gestionar roles', ManageChannels: 'Gestionar canales' };
+const PERM_NAME = { BanMembers: 'Banear miembros', KickMembers: 'Expulsar miembros', ManageRoles: 'Gestionar roles', ManageChannels: 'Gestionar canales', CreateInstantInvite: 'Crear invitación' };
 
 /* Mensajes claros para los errores típicos de Discord */
 const DISCORD_ERR = {
@@ -274,6 +274,26 @@ async function deleteChannel(g, c, b) {
   return { ok: true, note: '🗑️ ' + (isCat ? 'Categoría «' : '#') + name + (isCat ? '»' : '') + ' borrado' + (isCat ? 'a' : '') + (inside ? ' junto con ' + inside + ' canales' : '') + '.' };
 }
 
+/* Enlace de invitación del servidor (permanente y sin límite de usos; Discord reutiliza uno igual si ya existe).
+ * Se crea en un canal que vea todo el mundo (reglas, avisos del sistema…) para que quien entre no caiga en un canal vacío. */
+async function invite(g, c) {
+  need(c, 'CreateInstantInvite');
+  await g.channels.fetch().catch(() => {});
+  const me = g.members.me || (await g.members.fetchMe().catch(() => null));
+  if (!me) fail('Ahora mismo no puedo comprobar mis permisos en el servidor. Inténtalo en unos segundos.');
+  const has = (ch, who, perm) => { try { return !!ch.permissionsFor(who).has(perm); } catch (_) { return false; } };
+  const usable = (ch) => !!ch && typeof ch.createInvite === 'function' && has(ch, me, P.ViewChannel) && has(ch, me, P.CreateInstantInvite);
+  const everyone = g.roles.everyone || g.roles.cache.get(g.id);
+  const seen = (ch) => !everyone || has(ch, everyone, P.ViewChannel);
+  const byPos = (a, b) => (a.rawPosition ?? a.position ?? 0) - (b.rawPosition ?? b.position ?? 0);
+  const all = [...g.channels.cache.values()].filter(usable).sort(byPos);
+  const ch = [g.rulesChannel, g.systemChannel, g.publicUpdatesChannel].find((x) => usable(x) && seen(x)) || all.find(seen) || all[0];
+  if (!ch) fail('Centinela no puede crear invitaciones en ningún canal. Dale el permiso «Crear invitación» a su rol (o a @everyone).');
+  const inv = await ch.createInvite({ maxAge: 0, maxUses: 0, unique: false, reason: reasonOf(c) });
+  audit(g, c, 'Invitación creada desde el panel', [['Canal', '#' + ch.name], ['Código', inv.code || '—']], bot.COLOR.blue);
+  return { ok: true, url: inv.url || 'https://discord.gg/' + inv.code, code: inv.code, channel: ch.name, note: '🔗 Invitación lista (entra por #' + ch.name + ').' };
+}
+
 /* ---------- rutas HTTP ---------- */
 function router(express, { dashAuth, guildOf }) {
   const r = express.Router({ mergeParams: true });
@@ -308,7 +328,8 @@ function router(express, { dashAuth, guildOf }) {
   r.post('/role/remove', h(takeRole));
   r.post('/role/delete', h(deleteRole));
   r.post('/channel/delete', h(deleteChannel));
+  r.post('/invite', h(invite));
   return r;
 }
 
-module.exports = { router, who, overview, members, bans, ban, unban, kick, giveRole, takeRole, deleteRole, deleteChannel, explain };
+module.exports = { router, who, overview, members, bans, ban, unban, kick, giveRole, takeRole, deleteRole, deleteChannel, invite, explain };

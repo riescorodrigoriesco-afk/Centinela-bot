@@ -117,7 +117,22 @@ button:disabled{opacity:.5;cursor:not-allowed}
     if(!r.online)m.appendChild(el('p',{class:'err',text:'El bot no está en línea ahora mismo.'}));
     var grid=el('div',{class:'grid'});
     r.guilds.forEach(function(g){
-      grid.appendChild(el('div',{class:'card srvcard'},[el('h3',{text:g.name}),el('p',{class:'sub',text:g.members+' miembros · Centinela instalado'}),
+      var box=el('div',{style:'margin:0 0 10px'});
+      var link=el('button',{class:'btn sec mini',style:'margin-top:0',title:'Crear y copiar el enlace de invitación de este servidor','aria-label':'Enlace de invitación de '+g.name,text:'🔗'});
+      link.addEventListener('click',function(){
+        link.disabled=true;
+        api('POST','/api/guild/'+g.id+'/manage/invite').then(function(inv){
+          box.innerHTML='';
+          var inp=el('input',{type:'text',readonly:'readonly',value:inv.url,'aria-label':'Enlace de invitación',style:'font-size:.88rem'});
+          var cp=el('button',{class:'btn sec mini',style:'margin-top:0',text:'📋 Copiar'});
+          cp.addEventListener('click',function(){copyText(inv.url,inp).then(function(ok){toast(ok?'📋 Enlace copiado':'Selecciona el enlace y cópialo',!ok)})});
+          box.appendChild(inp);
+          box.appendChild(el('div',{class:'row',style:'margin-top:6px'},[cp,el('a',{class:'btn sec mini',style:'margin-top:0',href:inv.url,target:'_blank',rel:'noopener',text:'↗ Abrir'})]));
+          inp.focus();inp.select();
+          copyText(inv.url,inp).then(function(ok){toast(ok?'🔗 Invitación copiada: '+inv.url:'🔗 Invitación lista: '+inv.url)});
+        }).catch(function(e){toast(e.message,1)}).then(function(){link.disabled=false});
+      });
+      grid.appendChild(el('div',{class:'card srvcard'},[el('div',{class:'row',style:'justify-content:space-between;flex-wrap:nowrap;margin-bottom:12px'},[el('h3',{text:g.name,style:'margin:0'}),link]),el('p',{class:'sub',text:g.members+' miembros · Centinela instalado'}),box,
         el('button',{class:'btn',text:'Configurar',on:{click:function(){openGuild(g.id,r.guilds)}}})]));
     });
     (r.available||[]).forEach(function(g){
@@ -127,6 +142,12 @@ button:disabled{opacity:.5;cursor:not-allowed}
     if(!r.guilds.length&&!(r.available||[]).length)m.appendChild(el('p',{class:'sub',text:'No encontramos servidores donde tengas permiso de administrar. Crea uno o pide que te den el permiso «Gestionar servidor».'}));
     m.appendChild(grid);
     api('GET','/api/me').then(function(me){var w=$('#who2');if(!w)return;w.appendChild(el('span',{class:'sub',text:me.name+'  '}));w.appendChild(el('a',{href:'/auth/logout',text:'Cerrar sesión'}))});
+  }
+  /* Copiar al portapapeles (si el navegador no deja, queda el enlace seleccionado para copiarlo a mano) */
+  function copyText(t,inp){
+    var fb=function(){try{if(inp){inp.focus();inp.select()}return Promise.resolve(!!document.execCommand('copy'))}catch(e){return Promise.resolve(false)}};
+    try{if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(t).then(function(){return true},fb)}catch(e){}
+    return fb();
   }
   function waitNew(known){
     var n=0;clearInterval(pollT);toast('Cuando termines de añadir el bot, aparecerá aquí.');

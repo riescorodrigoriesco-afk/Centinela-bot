@@ -237,6 +237,7 @@ const INVITE_PERMS = new PermissionsBitField([
   P.ManageWebhooks,
   P.Connect,
   P.Speak,
+  P.CreateInstantInvite,
 ]).bitfield.toString();
 
 /* ============================ acciones base ============================ */
