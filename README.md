@@ -9,7 +9,7 @@ Un solo programa que hace dos cosas:
 
 | Módulo | Qué hace |
 |---|---|
-| **Anti bot-add** | Si alguien añade un bot que no está en la lista blanca: banea al bot y a quien lo añadió, y lo registra. |
+| **Anti bot-add** | Si alguien añade un bot que no es de confianza: banea al bot y a quien lo añadió, y lo registra. **Nunca** banea a un bot añadido por el dueño del servidor, por el creador del bot o por un usuario de la whitelist (y ese bot pasa solo a la lista de bots de confianza), ni a un bot que ya esté en la whitelist. Si no puede leer el registro de auditoría para saber quién lo añadió, **no banea a ciegas**: avisa en el log (da al bot el permiso «Ver registro de auditoría»). |
 | **Anti oleada de ingresos** | Si entran N cuentas en pocos segundos: activa *modo raid*, sanciona a los que entraron y pausa las invitaciones. |
 | **Edad mínima de cuenta** | Rechaza cuentas demasiado nuevas (configurable). |
 | **Anti-nuke** | Si alguien borra/crea canales o roles, banea o expulsa en masa: lo banea (o le quita los roles peligrosos). |
@@ -17,7 +17,7 @@ Un solo programa que hace dos cosas:
 | **Modo pánico** | `/panic on` activa el modo raid manualmente. |
 | **Whitelist** | Usuarios de confianza y bots permitidos (`/antiraid whitelist`). |
 
-El dueño del servidor, el propio bot y los usuarios de la whitelist nunca son sancionados.
+El dueño del servidor, el creador del bot (`BOT_OWNER_IDS` o el dueño de la aplicación en Discord), el propio bot y los usuarios y bots de la whitelist nunca son sancionados.
 
 ## Comandos
 

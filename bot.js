@@ -160,9 +160,29 @@ async function sendLog(guild, type, embed) {
 }
 
 /* ============================ permisos ============================ */
+/* El creador del bot (dueño de la aplicación o de su equipo, más BOT_OWNER_IDS) es de confianza en TODOS los servidores,
+ * aunque no sea el dueño de ese servidor. Se carga al arrancar y se refresca cada hora. */
+const creators = new Set(String(process.env.BOT_OWNER_IDS || '').split(',').map((x) => x.trim()).filter(Boolean));
+let creatorsAt = 0;
+async function loadCreators(client) {
+  if (Date.now() - creatorsAt < 3600000) return creators;
+  try {
+    const app = await client.application.fetch();
+    const o = app.owner;
+    if (o) {
+      if (o.members) for (const m of o.members.values()) creators.add(m.id);
+      else if (o.id) creators.add(o.id);
+    }
+    creatorsAt = Date.now();
+  } catch (_) {
+    creatorsAt = Date.now() - 3300000; // si falla, reintenta en 5 minutos
+  }
+  return creators;
+}
+
 function isTrusted(guild, userId, cfg) {
   const c = cfg || getCfg(guild.id);
-  return userId === guild.ownerId || userId === guild.client.user.id || c.whitelist.users.includes(userId) || c.whitelist.bots.includes(userId);
+  return userId === guild.ownerId || userId === guild.client.user.id || creators.has(userId) || c.whitelist.users.includes(userId) || c.whitelist.bots.includes(userId);
 }
 
 /* Máxima seguridad: solo el dueño y la whitelist pueden cambiar la protección. */
@@ -362,27 +382,51 @@ const recentJoins = new Map();
 async function handleBotAdd(member) {
   const guild = member.guild;
   const cfg = getCfg(guild.id);
+  if (member.id === guild.client.user.id) return; // el propio Centinela
   if (!cfg.antiBotAdd.enabled) return;
-  if (cfg.whitelist.bots.includes(member.id)) return;
+  if (cfg.whitelist.bots.includes(member.id)) return; // bot de confianza: nunca se toca
 
-  const entry = await findAuditEntry(guild, AuditLogEvent.BotAdd, member.id);
+  await loadCreators(guild.client);
+  // Hasta ~5 s esperando al registro de auditoría (a veces tarda en aparecer)
+  const entry = await findAuditEntry(guild, AuditLogEvent.BotAdd, member.id, 60000, 8);
   const adder = entry && entry.executor;
-  if (adder && isTrusted(guild, adder.id, cfg)) return;
+  const botField = ['Bot', member.user.username + '\n`' + member.id + '`'];
+
+  // Lo añadió el dueño del servidor, el creador del bot o alguien de la lista de confianza: se queda y pasa a ser bot de confianza
+  if (adder && isTrusted(guild, adder.id, cfg)) {
+    if (!cfg.whitelist.bots.includes(member.id)) { cfg.whitelist.bots.push(member.id); saveCfg(); }
+    sendLog(
+      guild,
+      'raid',
+      mkEmbed(guild, COLOR.green, GL(guild, '🤖 Bot allowed', '🤖 Bot permitido'), GL(guild, 'It was added by someone you trust, so it stays and is now a trusted bot.', 'Lo añadió alguien de confianza, así que se queda y ahora es un bot de confianza.'), [
+        botField,
+        [GL(guild, 'Added by', 'Añadido por'), '<@' + adder.id + '>'],
+      ])
+    );
+    return;
+  }
+
+  // No se pudo saber quién lo añadió (falta «Ver registro de auditoría» o Discord no lo registró): no se banea a ciegas
+  if (!adder) {
+    sendLog(
+      guild,
+      'raid',
+      mkEmbed(guild, COLOR.orange, GL(guild, '🤖 Bot not verified', '🤖 Bot sin verificar'), GL(guild, "I could not find out who added this bot (do I have View Audit Log?), so I did NOT ban it. If you don't recognize it, remove it.", 'No pude saber quién añadió este bot (¿tengo «Ver registro de auditoría»?), así que NO lo baneé. Si no lo reconoces, échalo.'), [botField])
+    );
+    return;
+  }
 
   const botRes = await punishMember(guild, member.id, 'ban', 'Antiraid: unauthorized bot');
-  let adderRes = GL(guild, 'unknown (needs View Audit Log permission)', 'desconocido (requiere permiso Ver registro de auditoría)');
-  if (adder) {
-    adderRes = cfg.antiBotAdd.punishAdder === 'none' ? 'none' : await punishMember(guild, adder.id, cfg.antiBotAdd.punishAdder, 'Antiraid: added an unauthorized bot');
-  }
+  const adderRes = cfg.antiBotAdd.punishAdder === 'none' ? 'none' : await punishMember(guild, adder.id, cfg.antiBotAdd.punishAdder, 'Antiraid: added an unauthorized bot');
   sendLog(
     guild,
     'raid',
     mkEmbed(guild, COLOR.red, GL(guild, '🤖 Unauthorized bot blocked', '🤖 Bot no autorizado bloqueado'), null, [
-      ['Bot', member.user.username + '\n`' + member.id + '`'],
-      [GL(guild, 'Added by', 'Añadido por'), adder ? '<@' + adder.id + '>\n`' + adder.id + '`' : '—'],
+      botField,
+      [GL(guild, 'Added by', 'Añadido por'), '<@' + adder.id + '>\n`' + adder.id + '`'],
       [GL(guild, 'Bot action', 'Acción al bot'), botRes],
       [GL(guild, 'Adder action', 'Acción al autor'), adderRes],
-      [GL(guild, 'Adder account created', 'Cuenta del autor creada'), adder ? '<t:' + Math.floor(adder.createdTimestamp / 1000) + ':R>' : '—'],
+      [GL(guild, 'Adder account created', 'Cuenta del autor creada'), '<t:' + Math.floor(adder.createdTimestamp / 1000) + ':R>'],
     ])
   );
 }
@@ -1353,6 +1397,9 @@ module.exports = {
   mkEmbed,
   punishMember,
   isTrusted,
+  creators,
+  loadCreators,
+  handleBotAdd,
   isStaff,
   canAct,
   canConfigure,

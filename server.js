@@ -342,6 +342,7 @@ async function startBot() {
       registerCommands(c);
       setDescription(c);
       try { botMod.restoreRaidTimers(c); } catch (e) { log('restoreRaidTimers: ' + e.message); }
+      botMod.loadCreators(c).catch(() => {}); // el creador del bot es de confianza en todos los servidores
       // Comprobación de la imagen de bienvenida: dibuja un texto de prueba y cuenta píxeles (0 = las fuentes no funcionan)
       try {
         require('./card').selfTest().then((r) => log('[tarjeta] ' + (r.ok ? 'imagen de bienvenida OK · fuentes propias=' + r.fonts + ' · ' + r.lit + ' px de texto · PNG ' + r.png + ' B' : '⚠️ PROBLEMA: ' + r.why))).catch((e) => log('[tarjeta] error en la prueba: ' + e.message));
