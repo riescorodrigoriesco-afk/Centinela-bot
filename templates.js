@@ -164,6 +164,29 @@ const T = {
       { name: '🔊 VOZ', ch: [v('🔊 Charla'), v('💤 AFK')] },
     ],
   },
+  proyectos: {
+    ico: '🗂️', n: 'Equipo de proyectos', d: 'Espacio de equipo para llevar varios proyectos a la vez: ideas, tareas, un canal por proyecto y reuniones.',
+    levels: false,
+    roles: [{ name: 'Líder de proyecto', color: 0x00b894, hoist: true, founder: true }, { name: 'Colaborador', color: 0x6c5ce7, hoist: true }],
+    selfRoles: [['💻 Desarrollo', 0x3498db], ['🎨 Diseño', 0xe91e63], ['📝 Contenido', 0xf1c40f], ['📈 Marketing', 0x2ecc71], ['🎧 Audio / Vídeo', 0x9b59b6]],
+    rules: ['Respeto entre compañeros de equipo.', 'Cada proyecto va en su propio canal: no mezcles temas.', 'Antes de empezar algo nuevo, coméntalo en #ideas.', 'Actualiza el estado de tus tareas para que el equipo sepa en qué vas.', 'Sin spam ni publicidad externa.'],
+    ticketCats: ['Unirme a un proyecto', 'Acceso a un canal', 'Ayuda', 'Otro'],
+    cats: [
+      {
+        name: '🗂️ PROYECTOS',
+        ch: [
+          t('📌│proyectos-activos', 'Lista y estado de cada proyecto', { ro: true }),
+          t('💡│ideas', 'Propón nuevos proyectos o mejoras'),
+          t('✅│tareas', 'Qué hay que hacer y quién lo lleva'),
+          t('🧩│proyecto-1', 'Canal del primer proyecto (cámbiale el nombre)'),
+          t('🧩│proyecto-2', 'Canal del segundo proyecto (cámbiale el nombre)'),
+          t('💬│general', 'Charla del equipo'),
+          TALK_BOTS,
+        ],
+      },
+      { name: '🔊 VOZ', ch: [v('🎙️ Reunión'), v('💻 Coworking'), v('💤 AFK')] },
+    ],
+  },
 };
 
 // Deportes y ligas (fútbol, boxeo, MMA, NBA, NFL, F1, tenis…): se generan en templates_deportes.js
