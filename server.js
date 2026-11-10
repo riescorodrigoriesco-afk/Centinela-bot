@@ -20,9 +20,12 @@ const unbanMod = require('./unban');
 let torneosMod;
 try { torneosMod = require('./torneos'); } catch (e) { console.log('[torneos] no se pudo cargar: ' + e.message); torneosMod = { commands: [], owns: () => false, handle: async () => {} }; }
 
-// Comandos slash: /help, /guía, /putbot, /setidioma, las camisetas, /hacer, /enviarmensaje, /torneo, /unban y /welcome (/bienvenida) y /goodbye (/despedida). El resto se maneja con menús, botones y el prefijo.
+// Comandos slash: /help, /guía, /putbot, /setidioma, las camisetas, /hacer, /enviarmensaje, /torneo, /unban, /verify y /welcome (/bienvenida) y /goodbye (/despedida). El resto se maneja con menús, botones y el prefijo.
 const GREET_COMMANDS = botMod.commands.filter((c) => ['welcome', 'goodbye'].includes(c.data.name));
-const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands, ...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands, ...GREET_COMMANDS, ...torneosMod.commands, ...unbanMod.commands];
+// Solo /verify de guard.js se registra como slash (el resto de ese módulo se queda en prefijo a propósito);
+// se filtra por nombre para no chocar con el /help que ya registra ui.js.
+const GUARD_COMMANDS = guardMod.commands.filter((c) => c.data.name === 'verify');
+const ALL_COMMANDS = [...uiMod.commands, ...voiceMod.commands, ...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands, ...GREET_COMMANDS, ...torneosMod.commands, ...unbanMod.commands, ...GUARD_COMMANDS];
 const COMMAND_MAP = new Map(ALL_COMMANDS.map((c) => [c.data.name, c]));
 
 const FULL_INTENTS = [
@@ -216,7 +219,7 @@ async function registerCommands(c) {
   }
   // Un comando con formato inválido no debe tumbar a los demás: se registran primero los básicos y luego uno a uno los extra
   try {
-    const extra = [...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands, ...GREET_COMMANDS, ...torneosMod.commands, ...unbanMod.commands];
+    const extra = [...camisasMod.commands, ...hacerMod.commands, ...mensajesMod.commands, ...GREET_COMMANDS, ...torneosMod.commands, ...unbanMod.commands, ...GUARD_COMMANDS];
     const base = ALL_COMMANDS.filter((x) => !extra.includes(x));
     await rest.put(Routes.applicationCommands(c.user.id), { body: base.map((x) => x.data.toJSON()) });
     log('Comandos básicos registrados (' + base.length + ')');
