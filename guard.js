@@ -1425,19 +1425,84 @@ def({
   },
 });
 
-/* ---------- verificación ---------- */
+/* ---------- verificación web ---------- */
+// Pequeño pool de concurrencia: aplicar permisos canal a canal uno a uno sería lento en servidores grandes.
+async function pMap(items, limit, fn) {
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx]).catch(() => {});
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+/* Hace que SOLO el canal de verificación sea visible para @everyone, y el resto solo para quien tenga
+   el rol de verificado. Así no hace falta tocar permisos a mano al activar el módulo. */
+async function applyVerificationPerms(guild, channelId, roleId) {
+  const role = guild.roles.cache.get(roleId);
+  const everyone = guild.roles.everyone;
+  if (!role || !everyone) return 0;
+  const me = guild.members.me;
+  let channels;
+  try { channels = await guild.channels.fetch(); } catch (_) { channels = guild.channels.cache; }
+  const list = [...channels.values()].filter((ch) => ch && ch.permissionOverwrites && !(ch.isThread && ch.isThread()));
+  let ok = 0;
+  await pMap(list, 5, async (ch) => {
+    if (ch.permissionsFor) {
+      const p = me && ch.permissionsFor(me);
+      if (!p || !p.has(P.ManageRoles)) return;
+    }
+    if (ch.id === channelId) await ch.permissionOverwrites.edit(everyone, { ViewChannel: true, SendMessages: false });
+    else { await ch.permissionOverwrites.edit(everyone, { ViewChannel: false }); await ch.permissionOverwrites.edit(role, { ViewChannel: true }); }
+    ok++;
+  });
+  return ok;
+}
+
+/* Publica el panel con el botón que lleva a la web (compartido con el instalador rápido de ui.js). */
+async function postVerifyPanel(ch, lc) {
+  const site = bot.siteUrl && bot.siteUrl();
+  const e = mkE(COLOR.blue, '✅ ' + L(lc, 'Verification', 'Verificación'), L(lc, 'Press the button below: it opens the website, sign in with Discord and confirm to get access to the rest of the server.', 'Pulsa el botón de abajo: abre la web, entra con tu cuenta de Discord y confirma para tener acceso al resto del servidor.'));
+  const row = site
+    ? new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel(L(lc, 'Verify', 'Verificarme')).setStyle(ButtonStyle.Link).setURL(site + '/verify?g=' + ch.guild.id))
+    : new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('v:nourl').setLabel(L(lc, 'Verify', 'Verificarme')).setStyle(ButtonStyle.Danger));
+  await ch.send({ embeds: [e], components: [row] });
+}
+
+/* Lo llama server.js cuando alguien termina la verificación en la web: da el rol y devuelve los canales
+   que ya puede ver, para enseñárselos en la propia web. */
+async function webVerify(guild, userId) {
+  const cfg = getCfg(guild.id);
+  if (!cfg.verification.enabled || !cfg.verification.role) return { ok: false, reason: 'off' };
+  const role = guild.roles.cache.get(cfg.verification.role);
+  if (!role) return { ok: false, reason: 'off' };
+  let member = guild.members.cache.get(userId) || (await guild.members.fetch(userId).catch(() => null));
+  if (!member) return { ok: false, reason: 'notmember' };
+  if (!member.roles.cache.has(role.id)) {
+    try { await member.roles.add(role, 'Centinela: verificación web'); } catch (_) { return { ok: false, reason: 'perm' }; }
+    modLog(guild, GL(guild, 'Member verified (web)', 'Miembro verificado (web)'), [[GL(guild, 'User', 'Usuario'), '<@' + userId + '>']], COLOR.green);
+  }
+  const channels = guild.channels.cache
+    .filter((ch) => ch.isTextBased && ch.isTextBased() && !(ch.isThread && ch.isThread()) && ch.permissionsFor && ch.permissionsFor(member) && ch.permissionsFor(member).has(P.ViewChannel))
+    .map((ch) => ({ id: ch.id, name: ch.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { ok: true, guildName: guild.name, channels };
+}
+
 def({
   name: 'verify',
   aliases: ['verificar'],
   level: 'cfg',
   perm: P.ManageGuild,
   slash: true,
-  d: 'Set up the verification button for new members',
-  es: 'Configura el botón de verificación para nuevos miembros',
+  d: 'Set up web verification for new members',
+  es: 'Configura la verificación web para nuevos miembros',
   opts: [
     ['action', 'string', true, 'setup or off', ['setup', 'off']],
-    ['channel', 'channel', false, 'Channel where the button is posted'],
-    ['role', 'role', false, 'Role given when verified'],
+    ['channel', 'channel', false, 'Channel where the button is posted (created automatically if omitted)'],
+    ['role', 'role', false, 'Role given when verified (created automatically if omitted)'],
   ],
   async run(ctx) {
     const cfg = getCfg(ctx.guild.id);
@@ -1447,20 +1512,32 @@ def({
       saveCfg();
       return ctx.reply(T(ctx, '🔴 Verification off.', '🔴 Verificación desactivada.'));
     }
-    if (act !== 'setup') return usage(ctx, '`' + prefixOf(ctx) + 'verify setup #canal @rol` · `' + prefixOf(ctx) + 'verify off`');
+    if (act !== 'setup') return usage(ctx, '`' + prefixOf(ctx) + 'verify setup [#canal] [@rol]` · `' + prefixOf(ctx) + 'verify off`');
+    await ctx.defer();
+    const g = ctx.guild;
     const chId = ctx.id(1);
     const roleId = ctx.id(2);
-    const ch = chId && ctx.guild.channels.cache.get(chId);
-    const role = roleId && ctx.guild.roles.cache.get(roleId);
-    if (!ch || !ch.isTextBased() || !role) return usage(ctx, '`' + prefixOf(ctx) + 'verify setup #canal @rol`');
-    if (role.managed || role.comparePositionTo(ctx.guild.members.me.roles.highest) >= 0) return ctx.reply(T(ctx, '❌ That role is above mine or managed by an integration.', '❌ Ese rol está por encima del mío o lo gestiona una integración.'));
-    const lc = ctx.guild.preferredLocale;
-    const e = mkE(COLOR.blue, '✅ ' + L(lc, 'Verification', 'Verificación'), L(lc, 'Press the button and answer a quick question to get access to the server.', 'Pulsa el botón y responde una pregunta rápida para entrar al servidor.'));
-    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('v:start').setLabel(L(lc, 'Verify', 'Verificarme')).setEmoji('✅').setStyle(ButtonStyle.Success));
-    await ch.send({ embeds: [e], components: [row] });
+    let ch = chId && g.channels.cache.get(chId);
+    let role = roleId && g.roles.cache.get(roleId);
+    if (chId && (!ch || !ch.isTextBased())) return ctx.reply(T(ctx, '❌ That channel is not valid.', '❌ Ese canal no vale.'));
+    if (roleId && !role) return ctx.reply(T(ctx, '❌ That role is not valid.', '❌ Ese rol no vale.'));
+    if (role && (role.managed || role.comparePositionTo(g.members.me.roles.highest) >= 0)) return ctx.reply(T(ctx, '❌ That role is above mine or managed by an integration.', '❌ Ese rol está por encima del mío o lo gestiona una integración.'));
+    if (!role) {
+      role = g.roles.cache.find((r) => r.name === 'Verificado' && !r.managed);
+      if (!role || role.comparePositionTo(g.members.me.roles.highest) >= 0) role = await g.roles.create({ name: 'Verificado', reason: 'Centinela: verificación' }).catch(() => null);
+    }
+    if (!role) return ctx.reply(T(ctx, '❌ I could not create or use the verified role. Check my role position.', '❌ No pude crear ni usar el rol de verificado. Revisa la posición de mi rol.'));
+    if (!ch) {
+      ch = g.channels.cache.find((c) => c.name === 'verificacion' && c.isTextBased && c.isTextBased());
+      if (!ch) ch = await g.channels.create({ name: 'verificacion', type: ChannelType.GuildText, reason: 'Centinela: verificación' }).catch(() => null);
+    }
+    if (!ch) return ctx.reply(T(ctx, '❌ I could not create or use the verification channel.', '❌ No pude crear ni usar el canal de verificación.'));
+    const lc = g.preferredLocale;
     cfg.verification = { enabled: true, channel: ch.id, role: role.id };
     saveCfg();
-    return ctx.reply(T(ctx, '✅ Verification panel sent to <#' + ch.id + '>. Make sure @everyone can only see that channel and **' + role.name + '** can see the rest.', '✅ Panel de verificación enviado a <#' + ch.id + '>. Haz que @everyone solo vea ese canal y que **' + role.name + '** vea el resto.'));
+    await postVerifyPanel(ch, lc);
+    const n = await applyVerificationPerms(g, ch.id, role.id);
+    return ctx.reply(T(ctx, '✅ Verification panel sent to <#' + ch.id + '>. Role: **' + role.name + '**. Channel permissions applied to ' + n + ' channels.', '✅ Panel de verificación enviado a <#' + ch.id + '>. Rol: **' + role.name + '**. Permisos aplicados en ' + n + ' canales.'));
   },
 });
 
@@ -1759,89 +1836,17 @@ function onEdit(oldM, newM) {
 }
 
 /* ============================ botón de verificación ============================ */
-const challenges = new Map();
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of challenges) if (now > v.exp) challenges.delete(k);
-}, 60000).unref();
-
-function question(userId, tries) {
-  const x = 2 + rnd(8);
-  const y = 2 + rnd(8);
-  const ans = x + y;
-  const opts = new Set([ans]);
-  while (opts.size < 4) opts.add(Math.max(1, ans + rnd(7) - 3));
-  const arr = [...opts].sort(() => Math.random() - 0.5);
-  return {
-    ans,
-    tries,
-    exp: Date.now() + 120000,
-    text: x + ' + ' + y,
-    row: new ActionRowBuilder().addComponents(arr.map((n) => new ButtonBuilder().setCustomId('v:a:' + userId + ':' + n).setLabel(String(n)).setStyle(ButtonStyle.Secondary))),
-  };
-}
-
+// La verificación ahora se hace en la web (botón de enlace, sin interacción que pasa por aquí).
+// Esto solo atiende botones ya publicados antes del cambio, o el aviso cuando no hay URL pública.
 async function handleButton(i) {
   if (!i.customId.startsWith('v:')) return false;
-  const g = i.guild;
   const lc = i.locale;
-  if (!g || !i.member) return true;
-  const cfg = getCfg(g.id);
-  const role = cfg.verification.role && g.roles.cache.get(cfg.verification.role);
-  if (!cfg.verification.enabled || !role) {
-    await i.reply({ content: L(lc, 'Verification is not active.', 'La verificación no está activa.'), flags: EPHEMERAL });
+  if (i.customId === 'v:nourl') {
+    await i.reply({ content: L(lc, '⚠️ The bot could not detect its public web address (SITE_URL). Ask the bot owner to set it.', '⚠️ El bot no pudo detectar su dirección web pública (SITE_URL). Pide al dueño del bot que la configure.'), flags: EPHEMERAL }).catch(() => {});
     return true;
   }
-  const [, act, uid, val] = i.customId.split(':');
-  const key = i.user.id + ':' + g.id;
-
-  if (act === 'start') {
-    if (i.member.roles.cache.has(role.id)) {
-      await i.reply({ content: L(lc, '✅ You are already verified.', '✅ Ya estás verificado.'), flags: EPHEMERAL });
-      return true;
-    }
-    const prev = challenges.get(key);
-    const q = question(i.user.id, prev ? prev.tries : 0);
-    challenges.set(key, q);
-    await i.reply({ content: '🔐 ' + L(lc, 'How much is ', '¿Cuánto es ') + '**' + q.text + '**?', components: [q.row], flags: EPHEMERAL });
-    return true;
-  }
-
-  if (act === 'a') {
-    if (uid !== i.user.id) {
-      await i.reply({ content: L(lc, 'This question is not for you.', 'Esta pregunta no es para ti.'), flags: EPHEMERAL });
-      return true;
-    }
-    const ch = challenges.get(key);
-    if (!ch || Date.now() > ch.exp) {
-      await i.update({ content: L(lc, '⌛ Expired. Press the verify button again.', '⌛ Expiró. Pulsa de nuevo el botón de verificar.'), components: [] });
-      return true;
-    }
-    if (parseInt(val, 10) === ch.ans) {
-      challenges.delete(key);
-      try {
-        await i.member.roles.add(role, 'Centinela: verification');
-        await i.update({ content: L(lc, '✅ Verified! Welcome.', '✅ ¡Verificado! Bienvenido.'), components: [] });
-        modLog(g, GL(g, 'Member verified', 'Miembro verificado'), [[GL(g, 'User', 'Usuario'), '<@' + i.user.id + '>']], COLOR.green);
-      } catch (e) {
-        await i.update({ content: L(lc, '⚠️ I could not give you the role. Tell the staff.', '⚠️ No pude darte el rol. Avisa al staff.'), components: [] });
-      }
-      return true;
-    }
-    ch.tries++;
-    if (ch.tries >= 3) {
-      challenges.delete(key);
-      await i.update({ content: L(lc, '❌ Too many wrong answers.', '❌ Demasiadas respuestas incorrectas.'), components: [] });
-      modLog(g, GL(g, 'Verification failed', 'Verificación fallida'), [[GL(g, 'User', 'Usuario'), '<@' + i.user.id + '>']], COLOR.red);
-      if (i.member.kickable) await i.member.kick('Centinela: failed verification').catch(() => {});
-      return true;
-    }
-    const q = question(i.user.id, ch.tries);
-    challenges.set(key, q);
-    await i.update({ content: '❌ ' + L(lc, 'Wrong. Try again: ', 'Incorrecto. Prueba otra vez: ') + '**' + q.text + '**', components: [q.row] });
-    return true;
-  }
-  return false;
+  await i.reply({ content: L(lc, '🔧 Verification now happens on the website. Ask staff to run `/verify setup` again to post the new button.', '🔧 La verificación ahora se hace desde la web. Pide a alguien del staff que use `/verify setup` otra vez para publicar el botón nuevo.'), flags: EPHEMERAL }).catch(() => {});
+  return true;
 }
 
 /* ============================ conexión de eventos ============================ */
@@ -1858,4 +1863,4 @@ function attach(client) {
   backup.startAuto(client, getCfg, saveCfg, logErr);
 }
 
-module.exports = { commands, handleButton, attach, CMDS, BY_NAME, statusEmbed, health };
+module.exports = { commands, handleButton, attach, CMDS, BY_NAME, statusEmbed, health, applyVerificationPerms, postVerifyPanel, webVerify };

@@ -18,6 +18,12 @@ const {
 } = require('discord.js');
 const snap = require('./snap');
 
+/* URL pública del panel/web (la misma lógica que usa server.js para el login con Discord), disponible
+   fuera de una petición HTTP: la necesitan los botones de verificación que se publican en Discord. */
+function siteUrl() {
+  return process.env.SITE_URL || (process.env.RAILWAY_PUBLIC_DOMAIN ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN : process.env.RENDER_EXTERNAL_URL || null);
+}
+
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 
 /* ============================ utilidades ============================ */
@@ -1417,4 +1423,5 @@ module.exports = {
   sleep,
   logErr,
   DANGEROUS,
+  siteUrl,
 };

@@ -286,13 +286,16 @@ async function setDescription(c) {
     // Intenta registrar la redirección OAuth2 automáticamente (si Discord no lo permite con el token del bot, se hace a mano en el Developer Portal)
     try {
       const cur = await rest.get(Routes.currentApplication());
-      const want = SITE_URL + '/auth/callback';
+      const wants = [SITE_URL + '/auth/callback', SITE_URL + '/verify/callback'];
       const have = Array.isArray(cur.redirect_uris) ? cur.redirect_uris : [];
-      if (!have.includes(want)) {
-        await rest.patch(Routes.currentApplication(), { body: { redirect_uris: [...have, want] } });
+      const missing = wants.filter((w) => !have.includes(w));
+      if (missing.length) {
+        await rest.patch(Routes.currentApplication(), { body: { redirect_uris: [...have, ...missing] } });
         const chk = await rest.get(Routes.currentApplication());
-        if (Array.isArray(chk.redirect_uris) && chk.redirect_uris.includes(want)) log('Redirección OAuth2 registrada: ' + want);
-        else log('⚠️ Discord NO permite registrar la redirección con el token del bot. Añádela a mano en discord.com/developers → tu app → OAuth2 → Redirects: ' + want);
+        const chkHave = Array.isArray(chk.redirect_uris) ? chk.redirect_uris : [];
+        const stillMissing = wants.filter((w) => !chkHave.includes(w));
+        if (!stillMissing.length) log('Redirección OAuth2 registrada: ' + missing.join(', '));
+        else log('⚠️ Discord NO permite registrar la redirección con el token del bot. Añádela a mano en discord.com/developers → tu app → OAuth2 → Redirects: ' + stillMissing.join(', '));
       } else {
         log('Redirección OAuth2 ya registrada');
       }
@@ -671,6 +674,101 @@ app.get('/auth/logout', (req, res) => {
 app.get('/api/me', (req, res) => {
   const s = sessionOf(req);
   res.json({ loggedIn: !!s, admin: !!(s && s.admin), name: s ? s.name : null, avatar: s ? s.avatar : null, oauth: oauthReady() });
+});
+
+/* ---------- Verificación de miembros desde la web (botón del panel de verificación) ---------- */
+const verifyStates = new Map(); // state -> { exp, guildId }
+const verifyPending = new Map(); // vsid -> { uid, guildId, exp }
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of verifyStates) if (v.exp < now) verifyStates.delete(k);
+  for (const [k, v] of verifyPending) if (v.exp < now) verifyPending.delete(k);
+}, 600000).unref();
+
+app.get('/verify', (req, res) => {
+  const gid = String(req.query.g || '');
+  if (!oauthReady() || !gid) return res.status(400).send('Enlace de verificación inválido.');
+  const state = crypto.randomBytes(16).toString('base64url');
+  verifyStates.set(state, { exp: Date.now() + 600000, guildId: gid });
+  const url = 'https://discord.com/oauth2/authorize?client_id=' + encodeURIComponent(config.id) + '&response_type=token&scope=identify&prompt=consent&state=' + state + '&redirect_uri=' + encodeURIComponent(baseUrl(req) + '/verify/callback');
+  res.redirect(url);
+});
+
+// Misma idea que /auth/callback: Discord devuelve el token en el fragmento, que solo ve el navegador.
+app.get('/verify/callback', (_req, res) => {
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Verificación</title>
+<body style="background:#0b1626;color:#c9d4e3;font:16px system-ui;padding:40px;max-width:480px;margin:0 auto"><div id="app"><p>Entrando con Discord…</p></div>
+<script>
+(function(){
+  var app=document.getElementById('app');
+  function esc(s){return String(s||'').replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+  function show(html){app.innerHTML=html}
+  async function start(){
+    var h=new URLSearchParams(location.hash.slice(1)),q=new URLSearchParams(location.search);
+    if(!h.get('access_token')){show('<p>No se pudo entrar con Discord' + (q.get('error')?' ('+esc(q.get('error'))+')':'') + '. <a href="javascript:location.reload()" style="color:#6cf">Reintentar</a></p>');return}
+    try{
+      var r=await fetch('/verify/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({access_token:h.get('access_token'),state:h.get('state')})});
+      var j=await r.json();
+      if(!r.ok)throw new Error(j.error||'token');
+      history.replaceState(null,'',location.pathname);
+      show('<p>Hola, <b>'+esc(j.name)+'</b>. Vas a verificarte en <b>'+esc(j.guildName)+'</b>.</p><button id="go" style="background:#3fd0b0;color:#06281f;border:0;border-radius:8px;padding:12px 20px;font-size:16px;font-weight:600;cursor:pointer">Verificarme</button>');
+      document.getElementById('go').onclick=async function(){
+        this.disabled=true;this.textContent='Verificando…';
+        try{
+          var r2=await fetch('/verify/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vsid:j.vsid})});
+          var j2=await r2.json();
+          if(!r2.ok)throw new Error(j2.error||'confirm');
+          var list=(j2.channels||[]).map(function(c){return '<li><a href="https://discord.com/channels/'+j2.guildId+'/'+c.id+'" style="color:#6cf" target="_blank">#'+esc(c.name)+'</a></li>'}).join('');
+          show('<p>Verificación completa en <b>'+esc(j2.guildName)+'</b>.</p><p>Canales disponibles:</p><ul style="padding-left:18px">'+(list||'<li>—</li>')+'</ul>');
+        }catch(e){show('<p>No se pudo completar la verificación. Vuelve a pulsar el botón del servidor.</p>')}
+      };
+    }catch(e){show('<p>El enlace expiró o no es válido. Vuelve a pulsar el botón del servidor.</p>')}
+  }
+  start();
+})();
+</script></body>`);
+});
+
+app.post('/verify/token', async (req, res) => {
+  try {
+    const { access_token: tok, state } = req.body || {};
+    const st = verifyStates.get(state);
+    if (!oauthReady() || !tok || !st) return res.status(400).json({ error: 'state' });
+    verifyStates.delete(state);
+    const h = { Authorization: 'Bearer ' + tok };
+    const info = await fetch('https://discord.com/api/v10/oauth2/@me', { headers: h });
+    if (!info.ok) return res.status(400).json({ error: 'token' });
+    const ij = await info.json();
+    if (!ij.application || ij.application.id !== String(config.id) || !ij.user) return res.status(400).json({ error: 'app' });
+    if (!client || !client.isReady()) return res.status(400).json({ error: 'offline' });
+    const g = client.guilds.cache.get(st.guildId);
+    if (!g) return res.status(400).json({ error: 'noguild' });
+    const me = ij.user;
+    const vsid = crypto.randomBytes(16).toString('base64url');
+    verifyPending.set(vsid, { uid: me.id, guildId: st.guildId, exp: Date.now() + 600000 });
+    res.json({ vsid, name: me.global_name || me.username, guildName: g.name });
+  } catch (e) {
+    log('Verificación: fallo al identificar con Discord: ' + e.message);
+    res.status(400).json({ error: 'token' });
+  }
+});
+
+app.post('/verify/confirm', async (req, res) => {
+  try {
+    const { vsid } = req.body || {};
+    const p = vsid && verifyPending.get(vsid);
+    if (!p) return res.status(400).json({ error: 'expired' });
+    verifyPending.delete(vsid);
+    if (!client || !client.isReady()) return res.status(400).json({ error: 'offline' });
+    const g = client.guilds.cache.get(p.guildId);
+    if (!g) return res.status(400).json({ error: 'noguild' });
+    const r = await guardMod.webVerify(g, p.uid);
+    if (!r.ok) return res.status(400).json({ error: r.reason || 'error' });
+    res.json({ guildId: g.id, guildName: r.guildName, channels: r.channels });
+  } catch (e) {
+    log('Verificación: fallo al confirmar: ' + e.message);
+    res.status(400).json({ error: 'confirm' });
+  }
 });
 
 /* ---------- Panel completo de configuración (sesión de Discord o administrador) ---------- */

@@ -78,7 +78,7 @@ const MODS = [
     ],
   },
   {
-    id: 'captcha', ico: '🔁', n: ['Captcha', 'Captcha'], d: ['Block raids with a button and a quick question', 'Bloquear raids con botón y una pregunta rápida'],
+    id: 'captcha', ico: '🔁', n: ['Verification', 'Verificación'], d: ['Block raids with a web verification button', 'Bloquear raids con un botón de verificación web'],
     get: (c) => c.verification.enabled,
     set: (c, v) => {
       if (v && (!c.verification.channel || !c.verification.role)) throw new Error('need-verify');
@@ -88,7 +88,14 @@ const MODS = [
       { key: 'channel', type: 'channel', n: ['Verification channel', 'Canal de verificación'], set: (c, v) => (c.verification.channel = v[0]), show: (c) => (c.verification.channel ? '<#' + c.verification.channel + '>' : '—') },
       { key: 'role', type: 'role', n: ['Role given when verified', 'Rol al verificarse'], set: (c, v) => (c.verification.role = v[0]), show: (c) => (c.verification.role ? '<@&' + c.verification.role + '>' : '—') },
     ],
-    acts: [{ key: 'panel', n: ['Post panel', 'Publicar panel'], run: async (x) => { await postVerify(x.g, x.cfg, x.lc); return pick(x.lc, ['✅ Panel posted.', '✅ Panel publicado.']); } }],
+    acts: [
+      { key: 'panel', n: ['Post panel', 'Publicar panel'], run: async (x) => { await postVerify(x.g, x.cfg, x.lc); return pick(x.lc, ['✅ Panel posted.', '✅ Panel publicado.']); } },
+      { key: 'perms', n: ['Reapply channel permissions', 'Reaplicar permisos de canal'], run: async (x) => {
+        if (!x.cfg.verification.channel || !x.cfg.verification.role) throw new Error(L(x.lc, 'Pick the channel and role first.', 'Primero elige el canal y el rol.'));
+        const n = await guard.applyVerificationPerms(x.g, x.cfg.verification.channel, x.cfg.verification.role);
+        return L(x.lc, n + ' channels updated.', n + ' canales actualizados.');
+      } },
+    ],
   },
   {
     id: 'minage', ico: '📅', n: ['Minimum account age', 'Antigüedad mínima'], d: ['Minimum account age to be able to join', 'Antigüedad mínima de cuenta para poder unirse'],
@@ -331,9 +338,7 @@ async function makeLogs(g, cfg) {
 async function postVerify(g, cfg, lc) {
   const ch = cfg.verification.channel && (g.channels.cache.get(cfg.verification.channel) || (await g.channels.fetch(cfg.verification.channel).catch(() => null)));
   if (!ch || !ch.isTextBased()) throw new Error(L(lc, 'Pick a verification channel first.', 'Elige primero un canal de verificación.'));
-  const e = new EmbedBuilder().setColor(colorOf(cfg)).setTitle('✅ ' + L(lc, 'Verification', 'Verificación')).setDescription(L(lc, 'Press the button and answer a quick question to get access to the server.', 'Pulsa el botón y responde una pregunta rápida para entrar al servidor.'));
-  const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('v:start').setLabel(L(lc, 'Verify', 'Verificarme')).setEmoji('✅').setStyle(ButtonStyle.Success));
-  await ch.send({ embeds: [e], components: [row] });
+  await guard.postVerifyPanel(ch, lc);
 }
 
 async function makeHoneypot(g, cfg, lc) {
@@ -398,13 +403,14 @@ const selKey = (i) => i.guildId + ':' + i.user.id;
 const INSTALLERS = {
   captcha: async (x) => {
     const g = x.g;
-    let role = g.roles.cache.find((r) => r.name === 'Verificado');
+    let role = g.roles.cache.find((r) => r.name === 'Verificado' && !r.managed && r.comparePositionTo(g.members.me.roles.highest) < 0);
     if (!role) role = await g.roles.create({ name: 'Verificado', reason: 'Centinela' });
     let ch = g.channels.cache.find((c) => c.name === 'verificacion' && c.type === ChannelType.GuildText);
     if (!ch) ch = await g.channels.create({ name: 'verificacion', type: ChannelType.GuildText, reason: 'Centinela' });
     x.cfg.verification = { enabled: true, channel: ch.id, role: role.id };
     await postVerify(g, x.cfg, x.lc);
-    return '<#' + ch.id + '> · <@&' + role.id + '> ' + L(x.lc, '(make @everyone see only that channel)', '(haz que @everyone solo vea ese canal)');
+    const n = await guard.applyVerificationPerms(g, ch.id, role.id);
+    return '<#' + ch.id + '> · <@&' + role.id + '> · ' + L(x.lc, n + ' channel permissions set', 'permisos aplicados en ' + n + ' canales');
   },
   minage: async (x) => { if (!x.cfg.minAccountAgeDays) x.cfg.minAccountAgeDays = 3; return x.cfg.minAccountAgeDays + ' d'; },
   antispam: async (x) => { for (const f of ['antiMassMention', 'antiInvite', 'antiIpLogger', 'antiEveryone']) x.cfg[f].enabled = true; },

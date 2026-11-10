@@ -24,6 +24,7 @@ const {
   RoleSelectMenuBuilder,
   UserSelectMenuBuilder,
   MessageFlags,
+  ChannelType,
   PermissionFlagsBits: P,
 } = require('discord.js');
 const bot = require('./bot');
@@ -219,6 +220,63 @@ function roundResultsEmbed(t, matches, title) {
 
 function nameOf(t, id) { return t.clubs[id].name; }
 
+/* ===================== un canal por enfrentamiento ===================== */
+function slugPart(s) {
+  const r = String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return (r || 'club').slice(0, 40);
+}
+function categoryName(t) { return clip('🏆 ' + (t.name || 'Torneo'), 90); }
+function matchChannelName(t, m) { return clip(slugPart(nameOf(t, m.home)) + '-vs-' + slugPart(nameOf(t, m.away)), 90); }
+
+function matchEmbed(t, m, roundLabel) {
+  const e = new EmbedBuilder().setColor(COLOR.orange).setTitle(roundLabel);
+  e.setDescription('🏳️ ' + nameOf(t, m.home) + '  **' + m.hg + ' - ' + m.ag + '**  ' + nameOf(t, m.away) + (m.pens ? '\n_(penaltis, gana ' + nameOf(t, m.winner) + ')_' : ''));
+  return e;
+}
+
+async function ensureCategory(guild, t) {
+  if (t.categoryId) {
+    const existing = await guild.channels.fetch(t.categoryId).catch(() => null);
+    if (existing) return existing;
+  }
+  const cat = await guild.channels.create({ name: categoryName(t), type: ChannelType.GuildCategory, reason: 'Torneo: ' + (t.name || t.id) });
+  t.categoryId = cat.id;
+  save();
+  return cat;
+}
+
+async function clearMatchChannels(guild, t) {
+  if (!t.matchChannels || !t.matchChannels.length) return;
+  for (const id of t.matchChannels) {
+    const ch = await guild.channels.fetch(id).catch(() => null);
+    if (ch) await ch.delete('Torneo: siguiente ronda').catch(() => {});
+  }
+  t.matchChannels = [];
+}
+
+/* Crea (o renueva) un canal por cada enfrentamiento de la ronda y publica ahí su resultado.
+   Si el bot no tiene permiso para crear canales, devuelve ok:false y se usa el embed combinado de siempre. */
+async function postMatchChannels(guild, t, matches, roundLabel) {
+  const real = matches.filter((m) => !m.bye);
+  if (!real.length) return { ok: true, created: [] };
+  try {
+    await clearMatchChannels(guild, t);
+    const cat = await ensureCategory(guild, t);
+    const created = [];
+    for (const m of real) {
+      const ch = await guild.channels.create({ name: matchChannelName(t, m), type: ChannelType.GuildText, parent: cat.id, topic: clip(roundLabel, 1024), reason: 'Torneo: ' + roundLabel });
+      await ch.send({ embeds: [matchEmbed(t, m, roundLabel)] }).catch(() => {});
+      created.push(ch.id);
+    }
+    t.matchChannels = created;
+    save();
+    return { ok: true, created };
+  } catch (e) {
+    logErr(e);
+    return { ok: false, created: [] };
+  }
+}
+
 function playLigaRound(t) {
   const round = t.fixtures[t.roundIdx];
   const matches = [];
@@ -318,7 +376,7 @@ async function execute(i) {
     const kind = i.options.getString('type', true);
     const name = clip(String(i.options.getString('name') || (kind === 'champions' ? 'Champions de ' + g.name : 'Liga de ' + g.name)).trim(), 80);
     const id = newId();
-    const t = { id, name, kind, creatorId: i.user.id, channelId: i.channelId, status: 'inscripcion', clubs: {}, order: [], roundIdx: -1, fixtures: [], bracket: [], champion: null, ballonDor: null, panel: null, createdAt: Date.now() };
+    const t = { id, name, kind, creatorId: i.user.id, channelId: i.channelId, status: 'inscripcion', clubs: {}, order: [], roundIdx: -1, fixtures: [], bracket: [], champion: null, ballonDor: null, panel: null, categoryId: null, matchChannels: [], createdAt: Date.now() };
     store_.list[id] = t;
     store_.active = id;
     save();
@@ -342,6 +400,13 @@ async function execute(i) {
       const ch = await g.channels.fetch(t.panel.channelId).catch(() => null);
       if (ch) await ch.send({ content: '🚫 Torneo **' + (t.name || '') + '** cancelado por ' + um(i.user.id) + '.' }).catch(() => {});
     } catch (_) { /* no pasa nada si no se pudo avisar */ }
+    await clearMatchChannels(g, t).catch(() => {});
+    if (t.categoryId) {
+      const cat = await g.channels.fetch(t.categoryId).catch(() => null);
+      if (cat) await cat.delete('Torneo cancelado').catch(() => {});
+      t.categoryId = null;
+    }
+    save();
     return i.reply({ content: L(lc, '✅ Tournament cancelled.', '✅ Torneo cancelado.'), flags: EPH });
   }
 }
@@ -418,7 +483,16 @@ async function handle(i) {
       const result = t.kind === 'champions' ? playKnockoutRound(t) : playLigaRound(t);
       save();
       const ch = i.channel;
-      await ch.send({ embeds: [roundResultsEmbed(t, result.matches, result.title)] }).catch(() => {});
+      const chans = await postMatchChannels(g, t, result.matches, result.title);
+      if (chans.ok && chans.created.length) {
+        const list = chans.created.map((id) => '<#' + id + '>').join(' · ');
+        const byes = result.matches.filter((m) => m.bye);
+        let note = '⚽ **' + result.title + '** — ' + list;
+        if (byes.length) note += '\n' + byes.map((m) => '🏳️ ' + nameOf(t, m.winner) + ' pasa de ronda (descanso)').join('\n');
+        await ch.send({ content: note }).catch(() => {});
+      } else {
+        await ch.send({ embeds: [roundResultsEmbed(t, result.matches, result.title)] }).catch(() => {});
+      }
       if (result.finished) { save(); await finish(ch, g, t); G(g.id).active = null; save(); }
       return refreshPanel(g, t);
     }
