@@ -1,25 +1,20 @@
 {
-  "name": "bot-activador",
+  "name": "ultimate-team-bot",
   "version": "1.0.0",
-  "description": "Panel para poner el token y el ID de un bot de Discord y mantenerlo en línea 24/7",
-  "main": "server.js",
-  "scripts": {
-    "start": "node start.js"
-  },
+  "private": true,
+  "description": "Bot de Discord \"Ultimate Team\": clubes, fichajes y temporadas de fútbol",
+  "main": "index.js",
+  "type": "commonjs",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.16.0",
-    "express": "^4.19.2",
-    "pg": "^8.11.3"
-  },
-  "optionalDependencies": {
-    "@napi-rs/canvas": "^0.1.65",
-    "@discordjs/voice": "^0.19.0",
-    "opusscript": "*",
-    "libsodium-wrappers": "*",
-    "@snazzah/davey": "^0.1.9",
-    "msedge-tts": "*"
+    "discord.js": "^14.27.0",
+    "dotenv": "^16.6.1",
+    "pg": "^8.13.1",
+    "@napi-rs/canvas": "^0.1.68"
   }
 }

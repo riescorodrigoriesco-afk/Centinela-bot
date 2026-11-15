@@ -1,128 +1,130 @@
-# Bot Antiraid + Minijuegos (con panel de activación)
+# Ultimate Team — bot de Discord
 
-Un solo programa que hace dos cosas:
+Bot público de Discord, completamente en español, para organizar clubes, fichajes y
+temporadas de fútbol entre los miembros de un servidor. Construido con `discord.js` v14
+(comandos slash, botones, menús desplegables y formularios/modales) y Postgres como base de
+datos persistente (los datos no se pierden al reiniciar el bot).
 
-1. **Panel web** donde pegas el **token** y el **ID** del bot y lo activas. Se mantiene en línea solo (reconexión automática, vigilante, arranque automático).
-2. **El bot**: antiraid completo, moderación, logs por tipo, bienvenidas/despedidas, minijuegos y economía.
+## 1. Qué hace
 
-## Antiraid (automático)
+- **Inscripción de clubes** mediante un panel con botón "Inscribirme" (no un comando manual),
+  que abre un formulario para el nombre del club. Cada club empieza con 500 M de presupuesto.
+  Un usuario no puede tener más de un club, y no se permiten nombres repetidos.
+- **Catálogo de jugadores**: intenta traer datos de FUT-DB si hay `FUTDB_API_KEY` configurada;
+  si no está disponible, usa un catálogo de 40 "cartas de prueba" claramente marcadas como tal
+  (nunca se presentan como datos oficiales). Sincronizar el catálogo nunca borra jugadores ya
+  fichados ni estadísticas de temporadas anteriores. Además, un administrador puede crear sus
+  propias cartas a mano con `/crear-carta` (nombre, posición, estadísticas, precio y, si quiere,
+  una imagen propia) para tener jugadores totalmente personalizados en el mercado.
+- **Panel de fichajes** con tres flujos: "Fichaje libre" (agentes libres, gratis), "Comprar"
+  (jugadores en venta, descuenta presupuesto) y "Rescindir" (solo tus propios jugadores,
+  vuelven al mercado sin reembolso). Se elige posición y se navegan las cartas (con su imagen
+  PNG) de una en una.
+- **`/plantilla`**: presupuesto y plantilla agrupada por posición.
+- **Temporadas**: `/temporada` genera Liga (todos contra todos) más Champions League y Europa
+  League (el resto de clubes se reparte entre las dos, por sorteo). Hacen falta al menos 4
+  clubes inscritos; si faltan, el bot dice cuántos hacen falta.
+- **Partidos**: `/jugar` disputa el siguiente partido pendiente de tu club, publica el
+  resultado con goleadores y asistencias (incluyendo en el canal configurado para resultados,
+  si hay uno) y guarda las estadísticas.
+- **`/tabla`** (clasificaciones de Liga/Champions/Europa League) y **`/premios`** (Balón de
+  Oro, Bota de Oro, Guante de Oro y Club del Año de la última temporada cerrada).
+- **`/finalizar-temporada`** (administradores, pide confirmación): calcula los premios y
+  bloquea nuevos partidos de esa temporada.
+- Canales configurables por función, acciones de administrador protegidas por el permiso
+  "Gestionar servidor", y errores siempre traducidos a mensajes claros en español (nunca
+  mensajes técnicos como "Missing Access").
 
-| Módulo | Qué hace |
-|---|---|
-| **Anti bot-add** | Si alguien añade un bot que no es de confianza: banea al bot y a quien lo añadió, y lo registra. **Nunca** banea a un bot añadido por el dueño del servidor, por el creador del bot o por un usuario de la whitelist (y ese bot pasa solo a la lista de bots de confianza), ni a un bot que ya esté en la whitelist. Si no puede leer el registro de auditoría para saber quién lo añadió, **no banea a ciegas**: avisa en el log (da al bot el permiso «Ver registro de auditoría»). |
-| **Anti oleada de ingresos** | Si entran N cuentas en pocos segundos: activa *modo raid*, sanciona a los que entraron y pausa las invitaciones. |
-| **Edad mínima de cuenta** | Rechaza cuentas demasiado nuevas (configurable). |
-| **Anti-nuke** | Si alguien borra/crea canales o roles, banea o expulsa en masa: lo banea (o le quita los roles peligrosos). |
-| **Anti spam / menciones masivas / invitaciones** | Aísla al infractor y borra los mensajes. |
-| **Modo pánico** | `/panic on` activa el modo raid manualmente. |
-| **Whitelist** | Usuarios de confianza y bots permitidos (`/antiraid whitelist`). |
-
-El dueño del servidor, el creador del bot (`BOT_OWNER_IDS` o el dueño de la aplicación en Discord), el propio bot y los usuarios y bots de la whitelist nunca son sancionados.
-
-## Comandos
-
-- **Protección:** `/antiraid status|toggle|tune|whitelist`, `/panic`, `/logs add|remove|list`, `/welcome`, `/goodbye`
-- **Moderación:** `/purge`, `/lock`, `/unlock`, `/isolate`, `/ban`, `/kick` — y con prefijo: `!purge`, `!lock`, `!unlock`, `!aislamiento`
-- **Desbanear:** `/unban` (en español `/desbanear`): al escribir en `usuario` sale la lista de baneados (busca por nombre, ID o motivo; también vale pegar un ID o una mención) y `motivo` es opcional. Hace falta el permiso «Banear miembros» (tanto para quien lo usa como para Centinela); queda en el registro de moderación. También con prefijo (`$unban <id>`) y desde el panel web (Gestionar servidor → Baneos).
-- **Juegos y economía:** `/coinflip` `/dice` `/rps` `/slots` `/hilo` `/trivia` `/tictactoe` `/8ball` · `/daily` `/work` `/balance` `/leaderboard`
-- **Info:** `/serverinfo` `/userinfo` `/ping` `/help`
-
-**Banner del bot.** Al conectar, si el bot todavía no tiene banner puesto (ni a mano desde Discord ni de un arranque anterior), Centinela se pone uno propio (dibujado en `banner.js`, mismo estilo que las tarjetas de bienvenida). Los bots pueden tener banner sin Nitro. Si ya tiene uno, no lo toca; para cambiarlo, se quita desde Discord (perfil de la app → Banner) y se reconecta.
-
-Los comandos y mensajes se muestran en **español o inglés** según el idioma del cliente de Discord de cada persona.
-
-**Torneos de simulación (`/torneo`)**: monta una liga o una Champions con los clubes del servidor. `/torneo crear tipo:Liga|Champions [nombre]` abre las inscripciones con un panel público. Cualquiera puede pulsar **📝 Inscribir club**: elige el rol de su club y su 11 titular entre los miembros que ya tienen ese rol (son los «jugadores disponibles» del club); sale en el panel con el club y quién lo inscribió. Un club solo se inscribe una vez, y cada persona inscribe como mucho un club (hasta 16 clubes por torneo). Cuando haya al menos 2, quien creó el torneo pulsa **▶️ Empezar**: en **Liga** se juegan todos contra todos, jornada a jornada (con **⚽ Siguiente** se simula la que toca); en **Champions** es eliminatoria directa (con descansos si el número de clubes no es potencia de 2). Los partidos se simulan al azar (es eso, una simulación, no hay estadísticas reales de por medio); cada jornada o ronda, Centinela crea una categoría con un canal por enfrentamiento (se borran los de la ronda anterior al pasar a la siguiente) y en el canal del torneo deja los enlaces a cada uno. Al terminar sale el campeón y se vota un **🥇 Balón de Oro** entre los 11 titulares de todos los clubes inscritos. `/torneo cancelar` lo cancela (quien lo creó, el dueño del servidor o quien tenga Gestionar servidor).
-
-**Verificación (`/verify setup` o `/verificar setup`)**: la verificación de nuevos miembros se hace en la web, no con una pregunta de matemáticas. El comando crea (si no le pasas uno) un rol **Verificado** y un canal **verificacion**, deja ese canal visible para todo el mundo (sin poder escribir) y el resto solo para quien tenga el rol — todo automático, sin tocar permisos a mano. El panel que publica tiene un botón que lleva a la web: ahí se entra con Discord y, al pulsar **Verificarme**, se concede el rol y se muestra la lista de canales ya disponibles. `/verify off` lo desactiva. También se puede activar desde el panel web (módulo «Verificación» en Ajustes), que hace lo mismo automáticamente al activarlo.
-
-**Bienvenidas y despedidas:** `/bienvenida` y `/despedida` (o el panel de `/help` → Ajustes). Basta con elegir `channel:` para que se activen; `image:` pone la imagen con avatar, nombre y un texto (`image_text:`, con `{user}` `{username}` `{server}` `{count}`) y `test:true` manda una prueba al instante y dice qué falla (permisos «Enviar mensajes» / «Adjuntar archivos», canal borrado…). La imagen usa las fuentes de `fonts/` (el contenedor no trae ninguna) y al arrancar el registro dice `[tarjeta] imagen de bienvenida OK`.
-
-**Logs por tipo:** `raid`, `mod`, `welcome`, `goodbye`. Puedes poner varios canales por tipo o solo uno (`/logs add`). Si no hay canal de raid configurado, el dueño recibe los avisos por mensaje directo.
-
-## Antes de activar: Developer Portal
-
-En **discord.com/developers → tu aplicación → Bot** activa:
-- **Server Members Intent** (obligatorio para detectar ingresos y bots nuevos)
-- **Message Content Intent** (para antispam, invitaciones y comandos con `!`)
-
-Si no los activas, el bot arranca en *modo limitado* y el panel te lo avisa.
-
-Después de invitarlo, **sube el rol del bot lo más arriba posible** en Ajustes del servidor → Roles. Si un rol de moderador está por encima del bot, no podrá sancionarlo. Pide permiso de *Ver registro de auditoría*: sin él no puede saber quién añadió un bot.
-
-## Uso local
+## 2. Instalación
 
 ```bash
 npm install
-PANEL_PASSWORD=tu_clave npm start
 ```
 
-Abre `http://localhost:3000` (usuario `admin`). Si no defines `PANEL_PASSWORD`, se genera una temporal y se imprime en la consola.
+Variables de entorno (ver `.env.example`):
 
-## Desplegar 24/7 (Railway, Render, VPS)
+| Variable | Obligatoria | Descripción |
+|---|---|---|
+| `DISCORD_BOT_TOKEN` | Sí | Token del bot. **Nunca se debe pegar en un chat ni en este README**; se configura como Secret en el panel del host (Render → Environment). |
+| `CLIENT_ID` | Sí | ID de la aplicación de Discord. |
+| `DATABASE_URL` | Sí | Cadena de conexión a Postgres. El bot crea su propio esquema `ultimate_team` dentro de esa base de datos, así que puede convivir con otros proyectos en el mismo Postgres. |
+| `FUTDB_API_KEY` | No | Clave de FUT-DB. Si falta o no es válida, el bot usa automáticamente el catálogo de cartas de prueba. |
+| `FUTDB_BASE_URL` | No | URL base de FUT-DB, por si cambia (por defecto `https://futdb.app/api`). |
+| `DEV_GUILD_ID` | No | ID de un servidor de pruebas para que los comandos se actualicen al instante ahí (además del registro global). |
 
-El bot está en línea **mientras el programa corra**, así que debe estar en un servidor siempre encendido.
+Arranque:
 
-- **Disco persistente:** guarda la configuración y la economía en `DATA_DIR` (por defecto `./data`). En Railway añade un *Volume* y apunta `DATA_DIR` a él; si no, se pierde al redesplegar.
-- **Variables:** `PANEL_PASSWORD` (obligatoria), `PORT`, `DATA_DIR`. Opcionales para arrancar sin usar el panel: `BOT_TOKEN`, `BOT_ID`, `BOT_PRESENCE`, `BOT_ACTIVITY`.
-- **Monitoreo:** `/health` responde sin contraseña, útil para UptimeRobot en planes que se duermen.
-- Incluye `Dockerfile`.
+```bash
+npm start
+```
 
-## Seguridad
+Al arrancar, el bot prepara el esquema de la base de datos (`db.migrate()`) y registra sus
+comandos slash automáticamente; no hace falta un paso de registro aparte.
 
-- El token se guarda en `data/config.json` (permisos 600) y **nunca** se envía al navegador.
-- Usa una `PANEL_PASSWORD` fuerte y sirve el panel por HTTPS.
-- Si el token se compartió en algún lugar público, reinícialo en el Developer Portal (Bot → Reset Token).
+## 3. Invitar el bot a un servidor
 
-## Web y panel
+El bot es público y se puede invitar a cualquier servidor. Desde el
+[portal de desarrolladores de Discord](https://discord.com/developers/applications), pestaña
+**OAuth2 → URL Generator**, hay que marcar los scopes `bot` y `applications.commands`, y estos
+permisos:
 
-- `/` — web pública de Centinela (características, explorador de comandos, guía de instalación).
-- `/panel` — panel privado (usuario `admin`, clave `PANEL_PASSWORD`) para poner el token y el ID.
-- `/api/public` — estado y lista de comandos; `/health` — healthcheck.
+- Ver canales
+- Enviar mensajes
+- Insertar enlaces
+- Adjuntar archivos
 
-## Comandos estilo RB3 Guard / XN Protect
+(permisos equivalentes al valor `52224`). Con la URL generada, cualquier administrador del
+servidor puede añadir el bot.
 
-Prefijo `$` (cambia con `$setprefix`) y slash `/`: `autosetup`, `config show`, `settings`, `check`, `whitelist`, `b-create`, `b-load`, `b-auto`, `verify`, `help` y más. Primer uso: sube el rol del bot, ejecuta `$autosetup` y luego `$check`.
+**Importante sobre canales privados**: si el bot se usa en un canal privado o con permisos
+restringidos, **un administrador del servidor debe darle acceso manualmente** a ese canal
+concreto (ver canal, enviar mensajes, insertar enlaces y adjuntar archivos) desde los ajustes
+de permisos del canal. Si al bot le falta alguno de esos permisos en un canal, no mostrará un
+error técnico: explicará en español qué falta y qué debe hacer un administrador.
 
-## Panel dentro de Discord
+## 4. Comandos
 
-Comandos slash extra: `/hacer` (el dueño o cualquier Administrador; guarda una copia, **borra todos los canales y roles** y construye el servidor completo según el tipo elegido, con permisos, normas, tickets, roles por botones, antiraid y el juego de camisetas) y `/setchannel` `/coleccion` `/intercambio` `/ajustes` (camisetas). `/enviarmensaje` (Administrador): abre un cuadro para escribir el mensaje (admite formato de Discord, enlaces, `{user}`/`{server}` y un botón con enlace), enseña la vista previa y, al confirmar, lo manda por MD a todos los miembros despacio (≈2 s por persona, se frena solo si Discord lo pide), con botón de parar e informe final por MD. Llega como un **mensaje normal** (sin recuadro/embed) que empieza con el nombre del servidor en negrita; máx. 1700 caracteres. Discord siempre enseña el perfil del propio bot en los MD, así que la foto y el nombre del servidor no se pueden cambiar por servidor. Si algo queda a medias (canal o rol borrado, panel sin publicar, canal de reglas vacío…) el bot menciona al dueño con una «💡 Sugerencia».
+| Comando | Quién | Qué hace |
+|---|---|---|
+| `/panel inscripciones` | Admin | Publica el panel de inscripción de clubes en el canal actual. |
+| `/panel fichajes` | Admin | Publica el panel de fichajes (Fichaje libre / Comprar / Rescindir). |
+| `/config canal tipo:<fichajes\|inscripciones\|partidos\|resultados> canal:<#canal>` | Admin | Define el canal usado para esa función. |
+| `/config max-clubes cantidad:<n>` | Admin | Define el máximo de clubes inscribibles. |
+| `/config inscripciones abiertas:<true/false>` | Admin | Abre o cierra las inscripciones. |
+| `/actualizar-jugadores` | Admin | Sincroniza el catálogo de jugadores (FUT-DB o cartas de prueba). |
+| `/crear-carta` | Admin | Crea a mano una carta de jugador personalizada (nombre, posición, valoración, estadísticas, precio e imagen opcional) y la añade al catálogo, sin depender de FUT-DB ni de las cartas de prueba. |
+| `/temporada` | Admin | Inicia una nueva temporada (Liga + Champions + Europa League). |
+| `/finalizar-temporada` | Admin | Cierra la temporada en curso (con confirmación) y calcula los premios. |
+| `/plantilla` | Todos | Muestra tu presupuesto y tu plantilla. |
+| `/jugar` | Todos | Disputa el siguiente partido pendiente de tu club. |
+| `/tabla [competicion]` | Todos | Muestra las clasificaciones. |
+| `/premios` | Todos | Muestra los premios de la última temporada cerrada. |
 
-**`/enviarmensaje` como app externa (solo el creador del bot).** El bot activa solo el tipo de instalación «usuario» (Developer Portal → Installation → Install Contexts → *User Install*; si Discord no lo deja por API, se marca a mano y el registro lo avisa). Después, en el panel (Tus servidores → «📲 Instalar en mi cuenta») el creador lo instala en su cuenta y puede usar `/enviarmensaje` en cualquier servidor, chat de grupo o MD aunque el bot no esté dentro. En esos sitios Discord no deja que el bot vea a los miembros ni les escriba por MD, así que escribes el mensaje (formato, enlaces y botón), ves la vista previa y se **publica como mensaje normal en el canal donde lo uses** (sin menciones masivas). Dentro de los servidores del bot, el administrador sigue mandando el MD a todos los miembros como antes.
+## 5. Qué se verificó realmente antes de entregar esto
 
-`/hacer` construye primero todo lo nuevo y borra lo viejo al final (así un reinicio a mitad nunca te deja el servidor vacío; los roles y canales viejos con el mismo nombre no se reutilizan) y deja en los registros líneas `[hacer]` / `[plantilla]` con lo que va haciendo.
+Siguiendo la instrucción explícita de no afirmar que algo está probado sin haberlo verificado:
 
-**Plantillas de servidor (45).** Se eligen en `/hacer tipo` (escribe para buscar: `liga`, `boxeo`, `nba`…), con `$plantilla` o en el panel web (con buscador). Las generales son comunidad, gaming, Minecraft, estudio, tienda, anime, creador, roleplay, proyecto (la comunidad pública de UN proyecto/app/bot: changelog, bugs, sugerencias) y **equipo de proyectos** (espacio interno para un equipo que lleva VARIOS proyectos a la vez: ideas, tareas, un canal por proyecto, roles por área y reuniones de voz). Las deportivas (`templates_deportes.js`) llevan un rol con el color del equipo y un canal por equipo, más jornada, tácticas, quiniela, fantasy y salas de voz; las de fútbol llevan también un canal de torneos para `/torneo`:
-- **Ligas de fútbol:** LaLiga, Premier League, Serie A, Bundesliga, Ligue 1, Liga MX, Liga Profesional Argentina, Brasileirão, Primeira Liga, Eredivisie, Saudi Pro League y MLS.
-- **Fútbol en general:** Champions League / Europa, Selecciones y Mundial, Fútbol (todas las ligas), tu propia liga o torneo y EA FC.
-- **Otros deportes:** boxeo (una categoría de peso por rol y federaciones), MMA/UFC, lucha libre, NBA, baloncesto, NFL (32 canales de equipo), béisbol, Fórmula 1, MotoGP, tenis, ciclismo, rugby, golf, pádel, running, gimnasio, esports y «todos los deportes».
-Las listas de equipos están en `templates_deportes.js` (se cambian en un momento al empezar una temporada). Los paneles de roles por botones admiten hasta 25 roles (20 con reacciones).
+- **Verificado de verdad** (con una base de datos real ejecutándose en este entorno, corriendo
+  el código tal cual, no una simulación en papel): inscripción de clubes (incluyendo rechazo de
+  usuario duplicado, nombre duplicado y cupo máximo), sincronización del catálogo de cartas de
+  prueba, fichaje libre (incluyendo que no se puede fichar dos veces al mismo agente libre),
+  compra con presupuesto suficiente (se descuenta exactamente el precio) y compra sin
+  presupuesto suficiente (se rechaza sin descontar nada), rescisión (sin reembolso, el jugador
+  vuelve al mercado, no se puede rescindir lo que no es tuyo), que resincronizar el catálogo no
+  borra ni desfícha jugadores ya fichados, generación de temporada (Liga + Champions/Europa,
+  exige un mínimo de clubes), simulación de todos los partidos de una temporada hasta el final,
+  que las estadísticas de goles de los jugadores cuadran exactamente con los marcadores,
+  cálculo de los 4 premios mínimos al finalizar la temporada, y que finalizar una temporada
+  libera el inicio de la siguiente.
+- **Verificado solo a nivel de código** (revisión manual + comprobación de sintaxis de cada
+  archivo), pero **no ejecutado de verdad contra Discord**: todo lo que depende de la propia
+  interfaz de Discord (botones, menús, formularios, generación de las imágenes PNG de las
+  cartas, mensajes de error traducidos). No tengo forma de abrir Discord y hacer clic en los
+  botones yo mismo desde aquí.
+- **No verificado todavía**: la integración real con FUT-DB (no encontré documentación pública
+  verificable de ese servicio; el adaptador está escrito para fallar con elegancia y caer al
+  catálogo de prueba si la API no responde como se espera, pero no he podido probarlo contra el
+  servicio real).
 
-El comando principal es `/help`: abre un menú con la tabla de comandos y funciones, **Instalar** (módulos como RaidProtect), **Ajustes** (valores y filtros por módulo), **Estado** y **Reportar**. Los comandos con prefijo siguen disponibles. Los minijuegos (`games.js`) ya no se registran como slash.
-
-## Panel web completo
-
-`/dashboard.html` permite configurar todos los módulos de cada servidor desde el navegador: instalar, activar/desactivar, valores, filtros, canales, roles y autoroles.
-
-**🛠️ Gestionar servidor (`manage.js`).** En el menú de cada servidor, «Gestionar servidor» deja hacer desde la web lo mismo que harías en Discord:
-- **Miembros:** buscar por nombre o ID, dar y quitar roles (etiquetas con ×), expulsar y banear (con motivo).
-- **Roles y Canales:** listas con buscador y casillas para borrar varios de una vez; en Canales, opción de borrar también lo que hay dentro de una categoría. Los que no se pueden salen con 🔒 y el motivo (rol de otro bot, por encima del rol de Centinela, canal obligatorio de la comunidad…).
-- **Baneos:** ver y buscar baneados, desbanear y banear por ID (aunque la persona no esté en el servidor), con opción de borrar sus mensajes de 1 o 7 días.
-- **🔗 Invitación:** en «Tus servidores», cada servidor lleva un botón 🔗: crea la invitación del servidor (permanente, sin límite de usos; Discord reutiliza una igual si ya existe), la copia al portapapeles y la enseña con «Copiar» y «Abrir». Entra por el canal de reglas o por uno que vea todo el mundo. Hace falta «Crear invitación» (tú, con tus permisos reales, y Centinela; las invitaciones nuevas de Centinela ya lo piden). Se puede revocar en Discord → Ajustes del servidor → Invitaciones.
-
-Reglas: el panel **nunca da más poder del que ya tienes en Discord**. El dueño del servidor puede con todo lo que el propio bot pueda; los demás (también el creador del bot) necesitan el permiso real (Banear / Expulsar / Gestionar roles / Gestionar canales) y un rol por encima del miembro o rol afectado, así que el creador del bot no puede usar esto en servidores ajenos donde no tenga permisos. Además hay que cumplir lo de siempre del panel (con «máxima seguridad» solo entran el dueño y la lista de confianza). No se puede banear al dueño, a Centinela ni a uno mismo. Las acciones llevan el motivo `Panel web · nombre (id)` en el registro de auditoría de Discord, se anotan en el registro de moderación (`/logs add mod`) y, como las hace el propio Centinela (que es de confianza), no activan el anti-nuke. Las peticiones que no salgan del propio panel se rechazan. Para que funcione, el rol de Centinela debe estar **por encima** de los roles que quieras gestionar y tener Gestionar roles / canales y Banear miembros.
-
-## Funciones extra
-
-Palabras prohibidas, tickets (botón → canal privado), roles por botones, niveles (`$rank`, `$top`) y autoroles. Se configuran en `/help` → Ajustes o en `/panel/dashboard.html`.
-
-`/guía` muestra un panel con todos los comandos con prefijo, por categorías.
-
-## Login con Discord (configurar desde la web)
-
-Se entra con «Login with Discord» (flujo implícito, sin secreto). Al arrancar, Centinela intenta registrar solo las redirecciones que necesita (`/auth/callback` para el panel y `/verify/callback` para la verificación web de miembros); si Discord no lo deja con el token del bot, lo avisa en el registro y hay que añadirlas a mano en el Developer Portal → OAuth2 → Redirects.
-
-El dueño del bot (o los IDs en `BOT_OWNER_IDS`) entra como administrador: ve todos los servidores y abre `/panel` (token e ID). Los demás ven solo sus servidores. Si aún no hay token configurado, `/panel` pide usuario `admin` + `PANEL_PASSWORD` una sola vez.
-
-## Voz
-
-`/putbot` mete al bot en tu canal de voz; hablas y responde en voz alta. `/setidioma` elige el idioma (es, en, pt, fr, de, it, ja). Necesita en el hosting una clave: `GROQ_API_KEY` (gratis, sirve para oír y pensar) u `OPENAI_API_KEY`; opcional `ANTHROPIC_API_KEY` para que piense con Claude. El bot necesita permisos Conectar y Hablar.
+Antes de dar por buena cualquiera de estas dos últimas partes, hace falta probarlas en un
+servidor de Discord real.

@@ -1,9 +1,8 @@
-FROM node:22-alpine
+FROM node:22-slim
 WORKDIR /app
-RUN apk add --no-cache ffmpeg
 COPY package.json ./
 RUN npm install --omit=dev
 COPY . .
 ENV PORT=3000
 EXPOSE 3000
-CMD ["node", "start.js"]
+CMD ["node", "index.js"]
