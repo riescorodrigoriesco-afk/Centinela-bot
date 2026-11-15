@@ -32,6 +32,20 @@ http.createServer((req, res) => {
   res.end('Ultimate Team bot activo.');
 }).listen(PORT, () => console.log('[http] Escuchando en el puerto ' + PORT));
 
+// En el plan gratuito, Render apaga el contenedor tras ~15 minutos sin tráfico HTTP
+// entrante, lo que mataría también la conexión con Discord. Para evitarlo, el propio
+// servicio se hace una petición a sí mismo cada 10 minutos (igual que hacía Centinela).
+// Si KEEPALIVE=off, o no hay URL pública conocida, esto se desactiva.
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || process.env.SITE_URL || null;
+if (SELF_URL && process.env.KEEPALIVE !== 'off') {
+  setInterval(() => {
+    fetch(SELF_URL).catch((e) => console.error('[keepalive] Fallo el auto-ping:', e.message));
+  }, 10 * 60 * 1000).unref();
+  console.log('[keepalive] Auto-ping activado hacia ' + SELF_URL + ' cada 10 minutos.');
+} else {
+  console.log('[keepalive] Desactivado (sin RENDER_EXTERNAL_URL o KEEPALIVE=off). En el plan gratuito, Render puede dormir el servicio tras inactividad.');
+}
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 async function registerCommands() {
