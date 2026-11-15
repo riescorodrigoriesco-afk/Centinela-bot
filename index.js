@@ -9,15 +9,18 @@ const { commands } = require('./src/commands');
 const { handleInteraction } = require('./src/components');
 const { safeError } = require('./src/helpers');
 
-const TOKEN = process.env.DISCORD_BOT_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
+// Acepta tanto los nombres nuevos (DISCORD_BOT_TOKEN/CLIENT_ID) como los que usaba
+// Centinela (BOT_TOKEN/BOT_ID), para no depender de que alguien reconfigure las
+// variables de entorno ya existentes en el servicio al reutilizar el mismo bot.
+const TOKEN = process.env.DISCORD_BOT_TOKEN || process.env.BOT_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID || process.env.BOT_ID;
 
 if (!TOKEN) {
-  console.error('[boot] Falta DISCORD_BOT_TOKEN en las variables de entorno (Secrets). El bot no puede arrancar sin ella.');
+  console.error('[boot] Falta el token del bot en las variables de entorno (DISCORD_BOT_TOKEN o BOT_TOKEN). El bot no puede arrancar sin ella.');
   process.exit(1);
 }
 if (!CLIENT_ID) {
-  console.error('[boot] Falta CLIENT_ID en las variables de entorno. El bot no puede registrar sus comandos sin él.');
+  console.error('[boot] Falta el ID de la aplicación en las variables de entorno (CLIENT_ID o BOT_ID). El bot no puede registrar sus comandos sin él.');
   process.exit(1);
 }
 
