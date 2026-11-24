@@ -7,8 +7,33 @@
 
 require("dotenv").config();
 
+// En Render las variables ya existían con otros nombres (DISCORD_BOT_TOKEN / BOT_TOKEN y BOT_ID).
+// Se aceptan todos para no tener que renombrarlas.
+const ENV_TOKEN = process.env.TOKEN || process.env.DISCORD_BOT_TOKEN || process.env.BOT_TOKEN;
+const ENV_CLIENT_ID = process.env.CLIENT_ID || process.env.BOT_ID;
+if (ENV_TOKEN) process.env.TOKEN = ENV_TOKEN;
+if (ENV_CLIENT_ID) process.env.CLIENT_ID = ENV_CLIENT_ID;
+
 const fs = require("fs");
 const path = require("path");
+const http = require("http");
+
+// Render ("Web Service") exige que el proceso escuche en process.env.PORT.
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+  res.end("Centinela bot activo.");
+}).listen(PORT, () => console.log(`[http] Escuchando en el puerto ${PORT}`));
+
+// En el plan gratuito, Render duerme el servicio tras ~15 min sin tráfico HTTP;
+// el bot se hace un auto-ping cada 10 minutos para seguir conectado a Discord.
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || process.env.SITE_URL || null;
+if (SELF_URL && process.env.KEEPALIVE !== "off") {
+  setInterval(() => {
+    fetch(SELF_URL).catch(e => console.error("[keepalive] Fallo el auto-ping:", e.message));
+  }, 10 * 60 * 1000).unref();
+  console.log(`[keepalive] Auto-ping activado hacia ${SELF_URL} cada 10 minutos.`);
+}
 const {
   Client, GatewayIntentBits, Partials, REST, Routes,
   SlashCommandBuilder, PermissionFlagsBits,
@@ -1325,7 +1350,8 @@ client.on("interactionCreate", async interaction => {
 });
 
 if (!process.env.TOKEN || !process.env.CLIENT_ID) {
-  console.log("❌ Falta TOKEN o CLIENT_ID en el archivo .env");
+  console.error("❌ Falta el token (TOKEN, DISCORD_BOT_TOKEN o BOT_TOKEN) o el ID (CLIENT_ID o BOT_ID) en las variables de entorno.");
+  process.exit(1);
 } else {
   client.login(process.env.TOKEN);
       }
