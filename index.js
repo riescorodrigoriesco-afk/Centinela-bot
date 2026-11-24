@@ -376,11 +376,11 @@ async function revertOperation(interaction, transferId) {
   if (c.transferChannel) {
     const channel = await guild.channels.fetch(c.transferChannel).catch(() => null);
     if (channel?.isTextBased()) {
-      await channel.send(`↩️ | **Operación #${t.id} revertida** (${t.type}) — <@${t.targetId}>`).catch(() => {});
+      await channel.send({ content: `**Operación ${t.id} revertida**: ${t.type === "Rescindir" ? "Rescisión" : t.type} de <@${t.targetId}>${t.prevTeamRoleId ? `, vuelve a <@&${t.prevTeamRoleId}>` : ", queda como agente libre"}.`, allowedMentions: { parse: ["users"] } }).catch(() => {});
     }
   }
 
-  return interaction.reply({ content: `✅ Operación #${t.id} (${t.type}) revertida correctamente.`, ephemeral: true });
+  return interaction.reply({ content: `**Operación ${t.id} revertida**: ${t.type === "Rescindir" ? "Rescisión" : t.type} de <@${t.targetId}>.`, ephemeral: true });
 }
 
 // =====================================================================
@@ -390,7 +390,6 @@ async function revertOperation(interaction, transferId) {
 
 const ES_TITULOS = { traspaso: "Propuesta de traspaso", clausula: "Pago de cláusula", cesion: "Propuesta de cesión", fin_cesion: "Fin anticipado de cesión", renovacion: "Propuesta de renovación", cambio_clausula: "Cambio de cláusula" };
 const ES_TIPOS = { traspaso: "Traspaso", clausula: "Cláusula pagada", cesion: "Cesión", fin_cesion: "Fin de cesión", renovacion: "Renovación", cambio_clausula: "Cambio de cláusula" };
-const ES_ICONOS = { traspaso: "✅️", clausula: "💥", cesion: "🔄", fin_cesion: "↩️", renovacion: "✍️", cambio_clausula: "🔒" };
 const ES_CONTRATO = ["renovacion", "cambio_clausula"]; // no cambian de club ni necesitan mercado abierto
 
 function esClubNombre(guild, roleId) {
@@ -454,7 +453,7 @@ async function esCambiarRol(guild, userId, quitarRoleId, ponerRoleId) {
 async function esEnviarCanal(guild, channelId, contenido) {
   if (!channelId) return;
   const ch = await guild.channels.fetch(channelId).catch(() => null);
-  if (ch?.isTextBased()) await ch.send(contenido.slice(0, 2000)).catch(() => {});
+  if (ch?.isTextBased()) await ch.send({ content: contenido.slice(0, 2000), allowedMentions: { parse: ["users"] } }).catch(() => {});
 }
 async function esAvisar(userId, contenido) {
   const u = await client.users.fetch(userId).catch(() => null);
@@ -547,6 +546,34 @@ function esMensajeOferta(op, guild) {
   }
   if (op.mensaje) extra.push(`Mensaje: "${op.mensaje}"`);
   return [principal, ...extra].join("\n");
+}
+// "Operación N completada: ..." — en el canal con menciones; en MD con nombres (las menciones de rol no se ven en MD)
+// cantidades con un decimal para los avisos: 100.0M, 2.5M, 750.0K
+function esDinero1(v) {
+  const n = typeof v === "number" ? v : money(v);
+  if (!Number.isFinite(n)) return String(v);
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
+}
+function esTextoCompletada(op, guild, numero, valores, enCanal) {
+  const club = id => (enCanal ? `<@&${id}>` : `**${esClubNombre(guild, id)}**`);
+  const J = `<@${op.jugadorId}>`;
+  const de = op.origenRoleId ? club(op.origenRoleId) : null;
+  const a = club(op.destinoRoleId);
+  const precio = op.precio ? esDinero1(op.precio) : null;
+  const temp = valores?.temporadas ? valores.temporadas.replace(/^T/, "") : null;
+  const cl = valores?.clausula ? esDinero1(valores.clausula) : null;
+  const contrato = temp ? ` Contrato: ${temp} temporada(s), ${cl ? `Cláusula ${cl}` : "sin cláusula"}.` : cl ? ` Cláusula ${cl}.` : "";
+  let cuerpo;
+  if (op.tipo === "traspaso" && !op.origenRoleId) cuerpo = `Fichaje de agente libre: ${J} ficha por ${a}.${contrato}`;
+  else if (op.tipo === "traspaso") cuerpo = `Traspaso: ${J} ficha por ${a} procedente de ${de}${precio ? ` por ${precio}` : ""}.${contrato}`;
+  else if (op.tipo === "clausula") cuerpo = `Pago de cláusula: ${J} ficha por ${a} tras pagar su cláusula de ${precio} a ${de}.${contrato}`;
+  else if (op.tipo === "cesion") cuerpo = `Cesión: ${J} se va cedido de ${de} a ${a} durante ${op.duracion.charAt(0).toLowerCase()}${op.duracion.slice(1)}${precio ? ` por ${precio}` : ", gratis"}.`;
+  else if (op.tipo === "fin_cesion") cuerpo = `Fin de cesión: ${J} vuelve de ${a} a ${de}.`;
+  else if (op.tipo === "renovacion") cuerpo = `Renovación: ${J} renueva con ${de}.${contrato}`;
+  else cuerpo = `Cambio de cláusula: ${J} tiene nueva cláusula con ${de}: ${op.clausulaAnterior ? esDinero1(op.clausulaAnterior) : "sin cláusula"} → ${cl}.`;
+  return `**Operación ${numero} completada**: ${cuerpo}`;
 }
 function esBotonesOferta(id) {
   return new ActionRowBuilder().addComponents(
@@ -671,7 +698,7 @@ async function esIniciarOp(interaction, op) {
   // sin nadie más a quien preguntar (p. ej. diriges los dos clubes): se ejecuta ya
   if (!op.pasos.length) {
     const res = await esEjecutarOp(op);
-    return interaction.editReply(res.ok ? `✅ Operación #${res.numero} completada.\n\n${esDescribirOp(op, interaction.guild)}` : `❌ ${res.msg}`);
+    return interaction.editReply(res.ok ? res.texto : `❌ ${res.msg}`);
   }
 
   const pending = read(PENDING_FILE);
@@ -784,8 +811,10 @@ async function esEjecutarOp(op) {
   });
   write(TRANSFERS_FILE, transfers);
 
-  await esEnviarCanal(guild, c.transferChannel, `${ES_ICONOS[op.tipo]} | **Operación #${numero}** — ${ES_TIPOS[op.tipo]}\n${esDescribirOp(op, guild)}`);
-  return { ok: true, numero };
+  const valores = r[op.jugadorId].values || {};
+  const texto = esTextoCompletada(op, guild, numero, valores, true);
+  await esEnviarCanal(guild, c.transferChannel, texto);
+  return { ok: true, numero, texto, textoMD: esTextoCompletada(op, guild, numero, valores, false) };
 }
 
 async function esBotonOp(interaction) {
@@ -833,13 +862,13 @@ async function esBotonOp(interaction) {
   esBorrarOp(id);
   const res = await esEjecutarOp(op);
   if (res.ok) {
-    if (op.proponenteId !== interaction.user.id) await esAvisar(op.proponenteId, `✅ Operación #${res.numero} completada: **${ES_TIPOS[op.tipo]}**\n${esDescribirOp(op, guild)}`);
-    if (guild) await esEnviarCanal(guild, cfg(guild.id).offersLogChannel, `✅ **${ES_TITULOS[op.tipo]} aceptada** — Operación #${res.numero}`);
+    if (op.proponenteId !== interaction.user.id) await esAvisar(op.proponenteId, res.textoMD);
+    if (guild) await esEnviarCanal(guild, cfg(guild.id).offersLogChannel, res.texto);
   } else {
     await esAvisar(op.proponenteId, `❌ No se pudo completar: **${ES_TITULOS[op.tipo]}** — ${res.msg}`);
   }
   return interaction.editReply({
-    content: res.ok ? `✅ Operación #${res.numero} confirmada.\n\n${esDescribirOp(op, guild)}` : `❌ No se pudo completar: ${res.msg}`,
+    content: res.ok ? res.textoMD : `❌ No se pudo completar: ${res.msg}`,
     components: []
   });
 }
@@ -1358,9 +1387,10 @@ async function esComandoContrato(interaction) {
       confirmedAt: new Date().toISOString(), reverted: false
     });
     write(TRANSFERS_FILE, transfers);
-    await esEnviarCanal(guild, c.transferChannel, `❌ | **Operación #${numero}** — Rescisión\n👤 <@${user.id}>\n🏳️ Antiguo club: **${esClubNombre(guild, club)}**\n📋 Motivo: **${motivo}**`);
+    const texto = `**Operación ${numero} completada**: Rescisión: <@${user.id}> deja <@&${club}>. Motivo: ${motivo}.`;
+    await esEnviarCanal(guild, c.transferChannel, texto);
     await esAvisar(user.id, `❌ Tu contrato con **${esClubNombre(guild, club)}** ha sido rescindido. Motivo: **${motivo}**. Ahora eres agente libre.`);
-    return interaction.editReply(`✅ Operación #${numero} — contrato de <@${user.id}> rescindido. Motivo: **${motivo}**. Ahora es agente libre.`);
+    return interaction.editReply(`${texto} Ahora es agente libre.`);
   }
 }
 
