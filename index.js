@@ -540,7 +540,7 @@ function esMensajeOferta(op, guild) {
     principal = `Se propone terminar ya la cesión de ${J}: vuelve de **${a}** a **${de}** ¿Aceptas?`;
   } else {
     principal = `**${ES_CONTRATO.includes(op.tipo) ? de : a}** te ofrece ${esContratoTexto(op)} ¿Aceptas?`;
-    if (op.tipo === "traspaso") extra.push(op.origenRoleId ? `Traspaso desde **${de}** por ${precio}` : "Fichaje como agente libre");
+    if (op.tipo === "traspaso" && op.origenRoleId) extra.push(`Traspaso desde **${de}** por ${precio}`);
     if (op.tipo === "clausula") extra.push(`Han pagado tu cláusula de ${precio} a **${de}**`);
     if (op.tipo === "renovacion") extra.push("Renovación de contrato");
     if (op.tipo === "cambio_clausula") extra.push(`Cláusula actual: **${op.clausulaAnterior || "sin cláusula"}**`);
