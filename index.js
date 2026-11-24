@@ -527,28 +527,26 @@ function esMensajeOferta(op, guild) {
     if (paso.tipo === "usuario" && ES_CONTRATO_JUGADOR.includes(op.tipo)) principal = `${quien} quiere renegociar: pide ${esContratoTexto(op)} ¿Aceptas?`;
     else if (paso.tipo === "club" && op.tipo === "traspaso") principal = `${quien} quiere renegociar: pide ${precio} por ${J} ¿Aceptas?`;
     else if (paso.tipo === "club" && op.tipo === "cesion") principal = `${quien} quiere renegociar: ofrece ${precio} por la cesión de ${J} durante **${op.duracion}** ¿Aceptas?`;
-    else principal = `${quien} quiere renegociar. ¿Seguimos con la operación?`;
-    extra.push(`📋 ${ES_TITULOS[op.tipo]} de ${J}`);
+    else principal = `${quien} quiere renegociar la operación de ${J} ¿Seguimos adelante?`;
   } else if (op.tipo === "traspaso" && paso.tipo === "club") {
     principal = `**${a}** ofrece ${precio} por ${J} ¿Aceptas?`;
-    extra.push(`📝 Le ofrece ${esContratoTexto(op)}`);
+    extra.push(`Le ofrece ${esContratoTexto(op)}`);
   } else if (op.tipo === "cesion" && paso.tipo === "club") {
     principal = `**${de}** te ofrece la cesión de ${J} durante **${op.duracion}**${op.precio ? ` por ${precio}` : " gratis"} ¿Aceptas?`;
   } else if (op.tipo === "cesion") {
     principal = `**${a}** te ofrece una cesión de **${op.duracion}** ¿Aceptas?`;
-    extra.push(`🔄 Cedido por **${de}**${op.precio ? ` por ${precio}` : ""}`);
+    extra.push(`Cedido por **${de}**${op.precio ? ` por ${precio}` : ""}`);
   } else if (op.tipo === "fin_cesion") {
     principal = `Se propone terminar ya la cesión de ${J}: vuelve de **${a}** a **${de}** ¿Aceptas?`;
   } else {
     principal = `**${ES_CONTRATO.includes(op.tipo) ? de : a}** te ofrece ${esContratoTexto(op)} ¿Aceptas?`;
-    if (op.tipo === "traspaso") extra.push(op.origenRoleId ? `🔁 Traspaso desde **${de}** por ${precio}` : "🆓 Fichaje como agente libre");
-    if (op.tipo === "clausula") extra.push(`💥 Han pagado tu cláusula de ${precio} a **${de}**`);
-    if (op.tipo === "renovacion") extra.push("✍️ Renovación de contrato");
-    if (op.tipo === "cambio_clausula") extra.push(`🔒 Cláusula actual: **${op.clausulaAnterior || "sin cláusula"}**`);
+    if (op.tipo === "traspaso") extra.push(op.origenRoleId ? `Traspaso desde **${de}** por ${precio}` : "Fichaje como agente libre");
+    if (op.tipo === "clausula") extra.push(`Han pagado tu cláusula de ${precio} a **${de}**`);
+    if (op.tipo === "renovacion") extra.push("Renovación de contrato");
+    if (op.tipo === "cambio_clausula") extra.push(`Cláusula actual: **${op.clausulaAnterior || "sin cláusula"}**`);
   }
-  if (op.mensaje) extra.push(`💬 "${op.mensaje}"`);
-  const cabecera = op.contra ? "🔄 **Contraoferta**" : op.rondas ? "🔄 **Nueva oferta**" : `📩 **${ES_TITULOS[op.tipo]}**`;
-  return `${cabecera} · ${guild?.name || "servidor"}\n\n${principal}\n${extra.join("\n")}`.trim();
+  if (op.mensaje) extra.push(`Mensaje: "${op.mensaje}"`);
+  return [principal, ...extra].join("\n");
 }
 function esBotonesOferta(id) {
   return new ActionRowBuilder().addComponents(
