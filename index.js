@@ -38,10 +38,7 @@ const {
   Client, GatewayIntentBits, Partials, REST, Routes,
   SlashCommandBuilder, PermissionFlagsBits,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  StringSelectMenuBuilder, UserSelectMenuBuilder,
-  RoleSelectMenuBuilder, ChannelSelectMenuBuilder,
-  ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle,
-  EmbedBuilder
+  ChannelType, EmbedBuilder
 } = require("discord.js");
 
 const client = new Client({
@@ -175,13 +172,16 @@ const CESION_CHOICES = CESION_DURATION_OPTIONS.map(v => ({ name: v, value: v }))
 const optClub = (o, desc = "Club") => o.setName("club").setDescription(desc).setRequired(true);
 const optJugador = o => o.setName("jugador").setDescription("Jugador").setRequired(true);
 const optRol = (o, required) => o.setName("rol").setDescription(required ? "Rol" : "Rol (vacío = quitar todos)").setRequired(required);
+const optCanal = o => o.setName("canal").setDescription("Canal").setRequired(true).addChannelTypes(ChannelType.GuildText);
+const MOTIVOS = ["Inactividad", "Exceso", "Fichaje ilegal", "No contamos con él", "Otro"].map(v => ({ name: v, value: v }));
 
 const esCommands = [
   new SlashCommandBuilder().setName("club").setDescription("Gestión de clubes")
     .addSubcommand(s => s.setName("crear").setDescription("Crear un club y asociarle un rol de Discord")
       .addRoleOption(o => o.setName("rol").setDescription("Rol del club").setRequired(true))
       .addStringOption(o => o.setName("presupuesto").setDescription("Presupuesto inicial (ej: 50M). Por defecto 50M"))
-      .addUserOption(o => o.setName("director").setDescription("Director del club (opcional)")))
+      .addUserOption(o => o.setName("director").setDescription("Director del club (opcional)"))
+      .addUserOption(o => o.setName("director2").setDescription("Segundo director (opcional)")))
     .addSubcommand(s => s.setName("presupuesto").setDescription("Modificar el presupuesto de un club")
       .addRoleOption(o => optClub(o))
       .addStringOption(o => o.setName("accion").setDescription("Qué quieres hacer").setRequired(true)
@@ -211,7 +211,15 @@ const esCommands = [
       .addRoleOption(o => optRol(o, false)))
     .addSubcommand(s => s.setName("quitar_rol_director").setDescription("Quitar un rol director, o todos si se deja vacío")
       .addRoleOption(o => optRol(o, false)))
-    .addSubcommand(s => s.setName("ver").setDescription("Ver la configuración actual de permisos")),
+    .addSubcommand(s => s.setName("canal_fichajes").setDescription("Canal donde se anuncian las operaciones")
+      .addChannelOption(o => optCanal(o)))
+    .addSubcommand(s => s.setName("canal_presupuestos").setDescription("Canal con el panel de presupuestos (se actualiza solo)")
+      .addChannelOption(o => optCanal(o)))
+    .addSubcommand(s => s.setName("canal_logs").setDescription("Canal donde se registran todas las ofertas")
+      .addChannelOption(o => optCanal(o)))
+    .addSubcommand(s => s.setName("nombre_bot").setDescription("Cambiar el nombre del bot en este servidor")
+      .addStringOption(o => o.setName("nombre").setDescription("Nuevo nombre").setRequired(true).setMaxLength(32)))
+    .addSubcommand(s => s.setName("ver").setDescription("Ver la configuración actual")),
 
   new SlashCommandBuilder().setName("director").setDescription("Directores de los clubes")
     .addSubcommand(s => s.setName("asignar").setDescription("Asignar un director a un club")
@@ -225,9 +233,16 @@ const esCommands = [
   new SlashCommandBuilder().setName("ayuda").setDescription("Mostrar todos los comandos del bot"),
 
   new SlashCommandBuilder().setName("jugador").setDescription("Gestión de jugadores")
-    .addSubcommand(s => s.setName("añadir").setDescription("Inscribir un jugador como agente libre")
-      .addUserOption(o => optJugador(o))
-      .addStringOption(o => o.setName("posicion").setDescription("Posición (opcional, ej: DC, MC, POR)").setMaxLength(30)))
+    .addSubcommand(s => {
+      s.setName("añadir").setDescription("Inscribir jugadores como agentes libres, o directamente en un club")
+        .addUserOption(o => optJugador(o))
+        .addRoleOption(o => o.setName("club").setDescription("Añadirlos directamente a este club (opcional)"))
+        .addStringOption(o => o.setName("clausula").setDescription("Cláusula (opcional)").addChoices(...CLAUSULA_CHOICES))
+        .addStringOption(o => o.setName("temporadas").setDescription("Temporadas de contrato (opcional)").addChoices(...TEMPORADAS_CHOICES))
+        .addStringOption(o => o.setName("posicion").setDescription("Posición (opcional, ej: DC, MC, POR)").setMaxLength(30));
+      for (let n = 2; n <= 10; n++) s.addUserOption(o => o.setName(`jugador${n}`).setDescription("Jugador adicional (opcional)"));
+      return s;
+    })
     .addSubcommand(s => s.setName("info").setDescription("Ver la información de un jugador")
       .addUserOption(o => optJugador(o)))
     .addSubcommand(s => s.setName("libres").setDescription("Ver todos los agentes libres (sin club)"))
@@ -247,7 +262,22 @@ const esCommands = [
     .addSubcommand(s => s.setName("abrir").setDescription("Abrir el mercado de fichajes (solo staff)"))
     .addSubcommand(s => s.setName("cerrar").setDescription("Cerrar el mercado de fichajes (solo staff)"))
     .addSubcommand(s => s.setName("estado").setDescription("Ver si el mercado está abierto o cerrado"))
-    .addSubcommand(s => s.setName("fin_temporada").setDescription("⚠️ Cerrar la temporada: resta 1 a todos los contratos y libera a los que llegan a 0")),
+    .addSubcommand(s => s.setName("fin_temporada").setDescription("⚠️ Cerrar la temporada: resta 1 a todos los contratos y libera a los que llegan a 0"))
+    .addSubcommand(s => s.setName("revertir").setDescription("Deshacer una operación ya confirmada (solo staff)")
+      .addIntegerOption(o => o.setName("numero").setDescription("Número de la operación (ej: 5)").setRequired(true).setMinValue(1))),
+
+  new SlashCommandBuilder().setName("contrato").setDescription("Contratos de los jugadores")
+    .addSubcommand(s => s.setName("renovar").setDescription("Renovar el contrato de un jugador de tu club; el jugador debe aceptar")
+      .addUserOption(o => optJugador(o))
+      .addStringOption(o => o.setName("temporadas").setDescription("Nuevas temporadas de contrato").setRequired(true).addChoices(...TEMPORADAS_CHOICES))
+      .addStringOption(o => o.setName("clausula").setDescription("Nueva cláusula (opcional)").addChoices(...CLAUSULA_CHOICES)))
+    .addSubcommand(s => s.setName("clausula").setDescription("Subir o bajar la cláusula de un jugador de tu club; el jugador debe aceptar")
+      .addUserOption(o => optJugador(o))
+      .addStringOption(o => o.setName("clausula").setDescription("Nueva cláusula").setRequired(true).addChoices(...CLAUSULA_CHOICES)))
+    .addSubcommand(s => s.setName("rescindir").setDescription("Rescindir el contrato de un jugador de tu club (queda libre al momento)")
+      .addUserOption(o => optJugador(o))
+      .addStringOption(o => o.setName("motivo").setDescription("Motivo").setRequired(true).addChoices(...MOTIVOS))
+      .addStringOption(o => o.setName("detalle").setDescription("Detalle del motivo (opcional)").setMaxLength(200))),
 
   new SlashCommandBuilder().setName("cesion").setDescription("Cesiones de jugadores")
     .addSubcommand(s => s.setName("lista").setDescription("Ver todas las cesiones activas y pendientes"))
@@ -271,51 +301,7 @@ const esCommands = [
       .addStringOption(o => o.setName("clausula").setDescription("Nueva cláusula").addChoices(...CLAUSULA_CHOICES)))
 ];
 
-const commandData = [
-  new SlashCommandBuilder().setName("menu").setDescription("Abre el menú de fichajes"),
-  new SlashCommandBuilder().setName("personalizar").setDescription("Configura el bot")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName("añadirequipo").setDescription("Añade un equipo, y opcionalmente sus dueños y jugadores")
-    .addRoleOption(opt => opt.setName("equipo").setDescription("Rol del club").setRequired(true))
-    .addUserOption(opt => opt.setName("dueño1").setDescription("Primer dueño (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("dueño2").setDescription("Segundo dueño (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador1").setDescription("Jugador (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador2").setDescription("Jugador (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador3").setDescription("Jugador (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador4").setDescription("Jugador (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador5").setDescription("Jugador (opcional)").setRequired(false))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName("personalizarpresupuesto").setDescription("Añade o resta presupuesto")
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName("dueño").setDescription("Asigna los dueños de un club")
-    .addRoleOption(opt => opt.setName("equipo").setDescription("Club").setRequired(true))
-    .addUserOption(opt => opt.setName("dueño1").setDescription("Primer dueño").setRequired(true))
-    .addUserOption(opt => opt.setName("dueño2").setDescription("Segundo dueño (opcional)").setRequired(false))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName("plantilla").setDescription("Muestra la plantilla de un club")
-    .addRoleOption(opt => opt.setName("equipo").setDescription("Club").setRequired(true)),
-  new SlashCommandBuilder().setName("añadirjugador").setDescription("Añade uno o varios jugadores directamente a un club, sin oferta")
-    .addUserOption(opt => opt.setName("jugador1").setDescription("Jugador a añadir").setRequired(true))
-    .addRoleOption(opt => opt.setName("equipo").setDescription("Club").setRequired(true))
-    .addStringOption(opt => opt.setName("clausula").setDescription("Cláusula (opcional)").setRequired(false)
-      .addChoices(...CLAUSULA_OPTIONS_M.map(v => ({ name: `${v}M`, value: `${v}M` }))))
-    .addStringOption(opt => opt.setName("temporadas").setDescription("Temporadas del contrato (opcional)").setRequired(false)
-      .addChoices(...Array.from({ length: 10 }, (_, i) => ({ name: `T${i + 1}`, value: `T${i + 1}` }))))
-    .addUserOption(opt => opt.setName("jugador2").setDescription("Jugador adicional (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador3").setDescription("Jugador adicional (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador4").setDescription("Jugador adicional (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador5").setDescription("Jugador adicional (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador6").setDescription("Jugador adicional (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador7").setDescription("Jugador adicional (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador8").setDescription("Jugador adicional (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador9").setDescription("Jugador adicional (opcional)").setRequired(false))
-    .addUserOption(opt => opt.setName("jugador10").setDescription("Jugador adicional (opcional)").setRequired(false))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName("quitarequipo").setDescription("Elimina un club existente")
-    .addRoleOption(opt => opt.setName("equipo").setDescription("Club a eliminar").setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  ...esCommands
-].map(x => x.toJSON());
+const commandData = esCommands.map(x => x.toJSON());
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -335,371 +321,9 @@ async function registerCommands() {
   console.log("✅ Comandos registrados (global, funcionan en todos los servidores).");
 }
 
-function mainMenu(showRoster = false, showRevert = false) {
-  const options = [
-    { label: "Fichaje libre", value: "Fichaje libre", emoji: "🆓" },
-    { label: "Compra", value: "Compra", emoji: "💰" },
-    { label: "Cesión", value: "Cesión", emoji: "🔄" },
-    { label: "Revocar cesión", value: "Revocar cesión", emoji: "↩️" },
-    { label: "Renovación", value: "Renovación", emoji: "✍️" },
-    { label: "Subida de Cláusula", value: "Subida de Cláusula", emoji: "📈" },
-    { label: "Bajada de Cláusula", value: "Bajada de Cláusula", emoji: "📉" },
-    { label: "Rescindir", value: "Rescindir", emoji: "❌" }
-  ];
-  if (showRoster) options.push({ label: "Ver mi plantilla", value: "Mi plantilla", emoji: "📋" });
-  if (showRevert) options.push({ label: "Revertir fichaje", value: "Revertir fichaje", emoji: "🔙" });
-
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId("transfer_type")
-      .setPlaceholder("¿Qué quieres hacer?")
-      .addOptions(options)
-  );
-}
-
-function modalFor(type) {
-  const modal = new ModalBuilder().setCustomId(`transfer_modal:${type}`).setTitle(type);
-
-  const add = (id, label, required = true) => {
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId(id)
-          .setLabel(label)
-          .setStyle(TextInputStyle.Short)
-          .setRequired(required)
-      )
-    );
-  };
-
-  switch (type) {
-    case "Compra":
-      add("precio", "Precio de compra");
-      return modal;
-    case "Cesión":
-      add("precio", "Precio de la cesión");
-      return modal;
-    case "Revocar cesión":
-      add("motivo", "Motivo de revocar la cesión");
-      return modal;
-    default:
-      return null; // este tipo no necesita modal, ya se resolvió todo con selectores
-  }
-}
-
-function buildPlantillaEmbed(guildId, role) {
-  const t = teams(guildId);
-  const teamData = t[role.id];
-  const r = roster(guildId);
-
-  const players = Object.entries(r).filter(([, info]) => info.teamRoleId === role.id);
-
-  const ownersText = teamData?.owners?.length
-    ? teamData.owners.map(id => `<@${id}>`).join(", ")
-    : "Sin dueño asignado";
-
-  const lines = players.length
-    ? players.map(([playerId, info]) => {
-        const v = info.values || {};
-        const detalles = [
-          v.clausula ? `Cláusula: ${v.clausula}` : null,
-          v.temporadas ? `Temporadas: ${v.temporadas}` : null,
-          v.precio ? `Precio: ${v.precio}` : null
-        ].filter(Boolean).join(" | ");
-        return `👤 <@${playerId}> — ${detalles || "sin detalles"}`;
-      }).join("\n")
-    : "No hay jugadores fichados.";
-
-  return new EmbedBuilder()
-    .setTitle(`📋 Plantilla de ${role.name}`)
-    .setDescription(`👑 Dueño(s): ${ownersText}\n\n${lines}`);
-}
-
 function ownedTeams(guildId, userId) {
   const t = teams(guildId);
   return Object.values(t).filter(team => team.owners?.includes(userId));
-}
-
-async function buildOwnPlayersOptions(interaction, roleId) {
-  const r = roster(interaction.guildId);
-  const playerIds = Object.entries(r).filter(([, info]) => info.teamRoleId === roleId).map(([id]) => id);
-  if (playerIds.length === 0) return [];
-
-  const members = await interaction.guild.members.fetch().catch(() => null);
-  if (!members) return null;
-
-  return playerIds
-    .map(id => {
-      const m = members.get(id);
-      return m ? { label: m.displayName.slice(0, 100), value: id } : { label: `Usuario ${id}`, value: id };
-    })
-    .slice(0, 25);
-}
-
-async function continueAfterTarget(interaction, data) {
-  // Rescindir: flujo aparte, sin modal, con motivo por lista y ejecución inmediata
-  if (data.type === "Rescindir") {
-    const pending = read(PENDING_FILE);
-    pending[interaction.user.id] = data;
-    write(PENDING_FILE, pending);
-
-    const row = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId("rescind_reason")
-        .setPlaceholder("¿Cuál es el motivo?")
-        .addOptions(
-          { label: "Inactividad", value: "Inactividad" },
-          { label: "Exceso", value: "Exceso" },
-          { label: "Fichaje ilegal", value: "Fichaje ilegal" },
-          { label: "No contamos con él", value: "No contamos con él" },
-          { label: "Otro...", value: "Otro" }
-        )
-    );
-    return interaction.reply({ content: "❌ **Rescindir**\nSelecciona el motivo.", components: [row], ephemeral: true });
-  }
-
-  const needsTeam = ["Fichaje libre", "Compra", "Cesión", "Renovación"].includes(data.type);
-  if (!needsTeam) return continueFlow(interaction, data);
-
-  const mine = ownedTeams(interaction.guildId, interaction.user.id);
-
-  // si eres dueño de un solo club, se asigna automáticamente sin preguntar
-  if (mine.length === 1) {
-    data.teamRoleId = mine[0].roleId;
-    data.teamRoleName = interaction.guild.roles.cache.get(mine[0].roleId)?.name || "Equipo";
-    return continueFlow(interaction, data);
-  }
-
-  // si eres dueño de varios clubes, eliges solo entre los tuyos; si no eres dueño de ninguno, eliges entre todos
-  const sourceTeams = mine.length > 1
-    ? Object.fromEntries(mine.map(t => [t.roleId, t]))
-    : teams(interaction.guildId);
-
-  const teamOptions = Object.keys(sourceTeams)
-    .map(roleId => {
-      const role = interaction.guild.roles.cache.get(roleId);
-      return role ? { label: role.name.slice(0, 100), value: roleId } : null;
-    })
-    .filter(Boolean)
-    .slice(0, 25);
-
-  if (teamOptions.length === 0) {
-    return interaction.reply({ content: "❌ No hay equipos añadidos. Usa /añadirequipo primero.", ephemeral: true });
-  }
-
-  const pending = read(PENDING_FILE);
-  pending[interaction.user.id] = data;
-  write(PENDING_FILE, pending);
-
-  const row = new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId("transfer_team")
-      .setPlaceholder("Selecciona el equipo")
-      .addOptions(teamOptions)
-  );
-
-  return interaction.reply({ content: "🏆 Selecciona el equipo.", components: [row], ephemeral: true });
-}
-
-// decide el siguiente paso: pedir cláusula, pedir temporadas, mostrar modal (si falta texto libre) o finalizar
-async function continueFlow(interaction, data) {
-  const needsClausula = ["Fichaje libre", "Compra", "Cesión", "Renovación", "Subida de Cláusula", "Bajada de Cláusula"].includes(data.type);
-  const needsTemporadas = ["Fichaje libre", "Compra", "Cesión", "Renovación"].includes(data.type);
-
-  data.values = data.values || {};
-
-  if (needsClausula && data.values.clausula === undefined) {
-    const pending = read(PENDING_FILE);
-    pending[interaction.user.id] = data;
-    write(PENDING_FILE, pending);
-
-    const options = CLAUSULA_OPTIONS_M.map(v => ({ label: `${v}M`, value: `${v}M` }));
-    const row = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId("select_clausula").setPlaceholder("Selecciona la cláusula").addOptions(options)
-    );
-    return interaction.reply({ content: "💰 Selecciona la cláusula.", components: [row], ephemeral: true });
-  }
-
-  if (needsTemporadas && data.values.temporadas === undefined) {
-    const pending = read(PENDING_FILE);
-    pending[interaction.user.id] = data;
-    write(PENDING_FILE, pending);
-
-    if (data.type === "Cesión") {
-      const options = CESION_DURATION_OPTIONS.map(v => ({ label: v, value: v }));
-      const row = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder().setCustomId("select_cesion_duracion").setPlaceholder("Selecciona la duración de la cesión").addOptions(options)
-      );
-      return interaction.reply({ content: "📅 Selecciona la duración de la cesión.", components: [row], ephemeral: true });
-    }
-
-    const options = Array.from({ length: 10 }, (_, i) => ({ label: `T${i + 1}`, value: `T${i + 1}` }));
-    const row = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId("select_temporadas").setPlaceholder("Selecciona las temporadas").addOptions(options)
-    );
-    return interaction.reply({ content: "📅 Selecciona las temporadas.", components: [row], ephemeral: true });
-  }
-
-  const modal = modalFor(data.type);
-  if (modal) {
-    const pending = read(PENDING_FILE);
-    pending[interaction.user.id] = data;
-    write(PENDING_FILE, pending);
-    return interaction.showModal(modal);
-  }
-
-  return finalizeOffer(interaction, data);
-}
-
-// arma y envía la oferta por MD (sin paso de confirmar), valida legalidad y registra el log
-async function finalizeOffer(interaction, data) {
-  const type = data.type;
-  const values = data.values || {};
-  if (data.teamRoleId) values.equipo = data.teamRoleName || "Equipo";
-
-  data.guildId = data.originGuildId || interaction.guildId || null;
-
-  const currentEntry = data.guildId ? roster(data.guildId)[data.targetId] : null;
-  const currentClausula = currentEntry?.values?.clausula ? money(currentEntry.values.clausula) : null;
-
-  if (currentClausula !== null) {
-    if (type === "Compra" && money(values.precio) < currentClausula) {
-      return interaction.reply({
-        content: `❌ Oferta no válida: el precio ofrecido (${values.precio}) es menor que la cláusula actual del jugador (${currentEntry.values.clausula}).`,
-        ephemeral: true
-      });
-    }
-    if (type === "Subida de Cláusula" && money(values.clausula) <= currentClausula) {
-      return interaction.reply({
-        content: `❌ Oferta no válida: la nueva cláusula debe ser mayor que la actual (${currentEntry.values.clausula}).`,
-        ephemeral: true
-      });
-    }
-    if (type === "Bajada de Cláusula" && money(values.clausula) >= currentClausula) {
-      return interaction.reply({
-        content: `❌ Oferta no válida: la nueva cláusula debe ser menor que la actual (${currentEntry.values.clausula}).`,
-        ephemeral: true
-      });
-    }
-  }
-
-  const target = await client.users.fetch(data.targetId);
-  const fields = Object.entries(values).map(([k, v]) => `**${k}:** ${v}`).join("\n");
-
-  const pendingId = `${interaction.user.id}_${Date.now()}`;
-  const approvals = read(PENDING_FILE);
-  approvals[`approval:${pendingId}`] = {
-    ...data,
-    values,
-    senderId: interaction.user.id,
-    pendingId
-  };
-  delete approvals[interaction.user.id];
-  write(PENDING_FILE, approvals);
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`approve:${pendingId}`).setLabel("Aceptar").setEmoji("✅").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`reject:${pendingId}`).setLabel("Rechazar").setEmoji("❌").setStyle(ButtonStyle.Danger)
-  );
-
-  await target.send({
-    content: `📩 **Nueva operación**\n\n**Tipo:** ${type}\n\n${fields}\n\n¿Aceptas esta operación?`,
-    components: [row]
-  }).catch(() => {});
-
-  if (data.guildId) {
-    const logGuild = client.guilds.cache.get(data.guildId);
-    if (logGuild) {
-      const c = cfg(data.guildId);
-      if (c.offersLogChannel) {
-        const logChannel = await logGuild.channels.fetch(c.offersLogChannel).catch(() => null);
-        if (logChannel?.isTextBased()) {
-          await logChannel.send(
-            `📨 **Oferta enviada**\n` +
-            `De: <@${interaction.user.id}> → Para: <@${data.targetId}>\n` +
-            `Tipo: **${type}**\n` +
-            `${fields}`
-          ).catch(() => {});
-        }
-      }
-    }
-  }
-
-  return interaction.reply({ content: "📩 Solicitud enviada correctamente por MD.", ephemeral: true });
-}
-
-// rescinde el contrato de inmediato, sin necesitar aceptación del jugador
-async function executeRescission(interaction, data, motivo) {
-  const guildId = data.originGuildId || interaction.guildId;
-  const guild = guildId ? client.guilds.cache.get(guildId) : null;
-
-  let prevTeamName = null;
-  let prevTeamRoleId = null;
-  let prevValues = null;
-  if (guild) {
-    const r = roster(guild.id);
-    const prevEntry = r[data.targetId];
-    prevTeamRoleId = prevEntry?.teamRoleId || null;
-    prevValues = prevEntry?.values || null;
-    prevTeamName = prevEntry?.values?.equipo || (prevTeamRoleId ? guild.roles.cache.get(prevTeamRoleId)?.name : null);
-
-    // el jugador queda como agente libre (aparece en /jugador libres)
-    r[data.targetId] = {
-      teamRoleId: null,
-      type: "Agente libre",
-      values: prevValues?.posicion ? { posicion: prevValues.posicion } : {},
-      since: new Date().toISOString()
-    };
-    saveRoster(guild.id, r);
-
-    const member = await guild.members.fetch(data.targetId).catch(() => null);
-    if (member && prevTeamRoleId) await member.roles.remove(prevTeamRoleId).catch(() => {});
-  }
-
-  const transfers = read(TRANSFERS_FILE);
-  let number = transfers.length + 1;
-  if (guild) {
-    const c = cfg(guild.id);
-    c.transferNumber += 1;
-    number = c.transferNumber;
-    saveCfg(guild.id, c);
-  }
-  transfers.push({
-    id: number,
-    guildId: guildId || null,
-    type: "Rescindir",
-    senderId: interaction.user.id,
-    targetId: data.targetId,
-    teamRoleId: null,
-    prevTeamRoleId,
-    prevValues,
-    price: 0,
-    values: { motivo },
-    confirmedAt: new Date().toISOString(),
-    reverted: false
-  });
-  write(TRANSFERS_FILE, transfers);
-
-  if (guild) {
-    const c = cfg(guild.id);
-    if (c.transferChannel) {
-      const channel = await guild.channels.fetch(c.transferChannel).catch(() => null);
-      if (channel?.isTextBased()) {
-        await channel.send(
-          `❌ | **Operación #${number}**\n` +
-          `👤 <@${data.targetId}>\n` +
-          (prevTeamName ? `🏳️ Antiguo equipo: **${prevTeamName}**\n` : "") +
-          `📋 Motivo: **${motivo}**`
-        ).catch(() => {});
-      }
-    }
-  }
-
-  const pending = read(PENDING_FILE);
-  delete pending[interaction.user.id];
-  write(PENDING_FILE, pending);
-
-  return interaction.reply({ content: `✅ Operación #${number} — Contrato de <@${data.targetId}> rescindido. Motivo: **${motivo}**`, ephemeral: true });
 }
 
 // revierte una operación ya confirmada (solo administradores)
@@ -710,7 +334,7 @@ async function revertOperation(interaction, transferId) {
 
   if (!t) return interaction.reply({ content: "❌ No encontré esa operación en este servidor.", ephemeral: true });
   if (t.reverted) return interaction.reply({ content: "❌ Esa operación ya fue revertida antes.", ephemeral: true });
-  if (t.type === "Subida de Cláusula" || t.type === "Bajada de Cláusula" || t.type === "Fin de cesión") {
+  if (["Subida de Cláusula", "Bajada de Cláusula", "Fin de cesión", "Renovación", "Cambio de cláusula"].includes(t.type)) {
     return interaction.reply({ content: "❌ Ese tipo de operación no se puede revertir.", ephemeral: true });
   }
 
@@ -729,10 +353,10 @@ async function revertOperation(interaction, transferId) {
     if (member && t.teamRoleId) await member.roles.remove(t.teamRoleId).catch(() => {});
 
     if (t.prevTeamRoleId) {
-      r[t.targetId] = { teamRoleId: t.prevTeamRoleId, type: "Revertido", values: {}, since: new Date().toISOString() };
+      r[t.targetId] = { teamRoleId: t.prevTeamRoleId, type: "Revertido", values: t.prevValues || {}, since: new Date().toISOString() };
       if (member) await member.roles.add(t.prevTeamRoleId).catch(() => {});
     } else {
-      delete r[t.targetId];
+      r[t.targetId] = { teamRoleId: null, type: "Agente libre", values: {}, since: new Date().toISOString() };
     }
 
     if (t.price > 0) {
@@ -760,13 +384,14 @@ async function revertOperation(interaction, transferId) {
 }
 
 // =====================================================================
-// COMANDOS EN ESPAÑOL: lógica. Comparten datos con /menu:
-// clubes = equipos, directores = dueños, jugadores = plantilla.
+// COMANDOS: /club, /config, /director, /jugador, /mercado, /cesion,
+// /traspaso, /contrato y /ayuda (directores = dueños de cada club).
 // =====================================================================
 
-const ES_TITULOS = { traspaso: "Propuesta de traspaso", clausula: "Pago de cláusula", cesion: "Propuesta de cesión", fin_cesion: "Fin anticipado de cesión" };
-const ES_TIPOS = { traspaso: "Traspaso", clausula: "Cláusula pagada", cesion: "Cesión", fin_cesion: "Fin de cesión" };
-const ES_ICONOS = { traspaso: "✅️", clausula: "💥", cesion: "🔄", fin_cesion: "↩️" };
+const ES_TITULOS = { traspaso: "Propuesta de traspaso", clausula: "Pago de cláusula", cesion: "Propuesta de cesión", fin_cesion: "Fin anticipado de cesión", renovacion: "Propuesta de renovación", cambio_clausula: "Cambio de cláusula" };
+const ES_TIPOS = { traspaso: "Traspaso", clausula: "Cláusula pagada", cesion: "Cesión", fin_cesion: "Fin de cesión", renovacion: "Renovación", cambio_clausula: "Cambio de cláusula" };
+const ES_ICONOS = { traspaso: "✅️", clausula: "💥", cesion: "🔄", fin_cesion: "↩️", renovacion: "✍️", cambio_clausula: "🔒" };
+const ES_CONTRATO = ["renovacion", "cambio_clausula"]; // no cambian de club ni necesitan mercado abierto
 
 function esClubNombre(guild, roleId) {
   return guild?.roles.cache.get(roleId)?.name || "club eliminado";
@@ -854,11 +479,13 @@ function esDescribirOp(op, guild) {
   const de = op.origenRoleId ? esClubNombre(guild, op.origenRoleId) : "Agente libre";
   const a = esClubNombre(guild, op.destinoRoleId);
   const lineas = [`👤 Jugador: <@${op.jugadorId}>`];
-  lineas.push(op.tipo === "fin_cesion" ? `↩️ Vuelve de **${a}** a **${de}**` : `🔁 De **${de}** → a **${a}**`);
+  if (ES_CONTRATO.includes(op.tipo)) lineas.push(`🏆 Club: **${de}**`);
+  else lineas.push(op.tipo === "fin_cesion" ? `↩️ Vuelve de **${a}** a **${de}**` : `🔁 De **${de}** → a **${a}**`);
   if (op.tipo === "cesion") lineas.push(`📅 Duración: **${op.duracion}**`);
   if (op.precio) lineas.push(`💰 ${op.tipo === "clausula" ? "Cláusula pagada" : "Precio"}: **${formatMoney(op.precio)}**`);
   if (op.values?.temporadas) lineas.push(`📝 Contrato: **${op.values.temporadas}**`);
-  if (op.values?.clausula) lineas.push(`🔒 Nueva cláusula: **${op.values.clausula}**`);
+  if (op.tipo === "cambio_clausula") lineas.push(`🔒 Cláusula: **${op.clausulaAnterior || "sin cláusula"}** → **${op.values.clausula}**`);
+  else if (op.values?.clausula) lineas.push(`🔒 Nueva cláusula: **${op.values.clausula}**`);
   return lineas.join("\n");
 }
 function esAprobadores(op) {
@@ -934,7 +561,8 @@ async function esIniciarOp(interaction, op) {
 async function esEjecutarOp(op) {
   const guild = client.guilds.cache.get(op.guildId);
   if (!guild) return { ok: false, msg: "No encuentro el servidor." };
-  if (!cfg(guild.id).mercadoAbierto) return { ok: false, msg: "El mercado está cerrado." };
+  const contrato = ES_CONTRATO.includes(op.tipo);
+  if (!contrato && !cfg(guild.id).mercadoAbierto) return { ok: false, msg: "El mercado está cerrado." };
 
   const t = teams(guild.id);
   const r = roster(guild.id);
@@ -942,8 +570,12 @@ async function esEjecutarOp(op) {
   const actual = entry?.teamRoleId || null;
   const precio = op.precio || 0;
   const ahora = new Date().toISOString();
+  const prevValues = { ...(entry?.values || {}) }; // para poder revertir
 
-  if (op.tipo === "fin_cesion") {
+  if (contrato) {
+    const dueno = entry?.cesion ? entry.cesion.origenRoleId : actual;
+    if (!entry || dueno !== op.origenRoleId) return { ok: false, msg: "El jugador ya no está en el mismo club que cuando se propuso." };
+  } else if (op.tipo === "fin_cesion") {
     if (!entry?.cesion || entry.teamRoleId !== op.destinoRoleId || entry.cesion.origenRoleId !== op.origenRoleId) {
       return { ok: false, msg: "Esa cesión ya no está activa." };
     }
@@ -957,7 +589,12 @@ async function esEjecutarOp(op) {
 
   let clubAnterior;
   let nuevoClub;
-  if (op.tipo === "fin_cesion") {
+  if (contrato) {
+    clubAnterior = op.origenRoleId;
+    nuevoClub = op.origenRoleId;
+    entry.values = { ...(entry.values || {}), ...op.values };
+    entry.type = ES_TIPOS[op.tipo];
+  } else if (op.tipo === "fin_cesion") {
     clubAnterior = op.destinoRoleId;
     nuevoClub = op.origenRoleId;
     entry.teamRoleId = nuevoClub;
@@ -993,7 +630,7 @@ async function esEjecutarOp(op) {
     saveTeams(guild.id, t);
   }
   saveRoster(guild.id, r);
-  await esCambiarRol(guild, op.jugadorId, clubAnterior, nuevoClub);
+  if (!contrato) await esCambiarRol(guild, op.jugadorId, clubAnterior, nuevoClub);
   if (precio > 0) await updateBudgetPanel(guild);
 
   const c = cfg(guild.id);
@@ -1010,6 +647,7 @@ async function esEjecutarOp(op) {
     targetId: op.jugadorId,
     teamRoleId: nuevoClub,
     prevTeamRoleId: clubAnterior || null,
+    prevValues,
     price: precio,
     values: r[op.jugadorId].values || {},
     confirmedAt: ahora,
@@ -1222,13 +860,14 @@ async function esComandoClub(interaction) {
     const textoPres = interaction.options.getString("presupuesto");
     const presupuesto = textoPres ? money(textoPres) : 50000000;
     if (!Number.isFinite(presupuesto) || presupuesto < 0) return esError(interaction, "Presupuesto inválido. Ejemplos: 50M, 750K, 1000000.");
-    const director = interaction.options.getUser("director");
-    if (director?.bot) return esError(interaction, "Un bot no puede ser director.");
-    t[role.id] = { roleId: role.id, budget: presupuesto, owners: director ? [director.id] : [] };
+    const directores = [interaction.options.getUser("director"), interaction.options.getUser("director2")].filter(Boolean);
+    if (directores.some(u => u.bot)) return esError(interaction, "Un bot no puede ser director.");
+    const owners = [...new Set(directores.map(u => u.id))];
+    t[role.id] = { roleId: role.id, budget: presupuesto, owners };
     saveTeams(guild.id, t);
     await updateBudgetPanel(guild);
     return interaction.reply({
-      content: `✅ Club <@&${role.id}> creado con **${formatMoney(presupuesto)}**${director ? ` y director <@${director.id}>` : ""}.`,
+      content: `✅ Club <@&${role.id}> creado con **${formatMoney(presupuesto)}**${owners.length ? `. Director(es): ${owners.map(id => `<@${id}>`).join(", ")}` : ""}.`,
       ephemeral: true
     });
   }
@@ -1275,14 +914,33 @@ async function esComandoConfig(interaction) {
   const fmt = ids => (ids.length ? ids.map(id => `<@&${id}>`).join(", ") : "ninguno");
 
   if (sub === "ver") {
-    const embed = new EmbedBuilder().setTitle("⚙️ Permisos del bot").setDescription(
+    const canal = id => (id ? `<#${id}>` : "sin configurar");
+    const embed = new EmbedBuilder().setTitle("⚙️ Configuración del bot").setDescription(
       `🛡️ **Staff** (gestionar el bot, clubes y mercado): ${fmt(c.staffRoles)}\n` +
       `🧰 **Ayudantes** (gestionar jugadores): ${fmt(c.helperRoles)}\n` +
-      `👔 **Directores** (traspasos y cesiones): ${c.directorRoles.length ? fmt(c.directorRoles) : "todos (no hay ninguno configurado)"}\n\n` +
-      `Los administradores del servidor siempre tienen todos los permisos, y los directores de un club siempre pueden usar los comandos de director.\n\n` +
+      `👔 **Directores** (traspasos, cesiones y contratos): ${c.directorRoles.length ? fmt(c.directorRoles) : "todos (no hay ninguno configurado)"}\n` +
+      `Los administradores siempre tienen todos los permisos, y los directores de un club siempre pueden usar los comandos de director.\n\n` +
+      `📢 Fichajes: ${canal(c.transferChannel)}\n💰 Presupuestos: ${canal(c.budgetChannel)}\n📨 Logs de ofertas: ${canal(c.offersLogChannel)}\n\n` +
       `🛒 Mercado: **${c.mercadoAbierto ? "abierto" : "cerrado"}** · 📅 Temporada: **${c.temporada}**`
     );
     return interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+
+  const canales = { canal_fichajes: "transferChannel", canal_presupuestos: "budgetChannel", canal_logs: "offersLogChannel" };
+  if (canales[sub]) {
+    const canal = interaction.options.getChannel("canal");
+    c[canales[sub]] = canal.id;
+    if (sub === "canal_presupuestos") c.budgetMessage = null;
+    saveCfg(interaction.guildId, c);
+    if (sub === "canal_presupuestos") await updateBudgetPanel(interaction.guild);
+    return interaction.reply({ content: `✅ Canal guardado: <#${canal.id}>`, ephemeral: true });
+  }
+
+  if (sub === "nombre_bot") {
+    const nombre = interaction.options.getString("nombre").trim();
+    const ok = await interaction.guild.members.me.setNickname(nombre).then(() => true).catch(() => false);
+    if (!ok) return esError(interaction, "No pude cambiar el nombre. El bot necesita el permiso **Cambiar apodo**.");
+    return interaction.reply({ content: `✅ Ahora me llamo **${nombre}** en este servidor.`, ephemeral: true });
   }
 
   const quitar = sub.startsWith("quitar_");
@@ -1400,14 +1058,36 @@ async function esComandoJugador(interaction) {
   if (!esPuede(interaction, "ayudante")) return esSinPermiso(interaction, "ayudante");
 
   if (sub === "añadir") {
-    if (user.bot) return esError(interaction, "Un bot no puede ser jugador.");
-    if (info) {
-      return esError(interaction, `<@${user.id}> ya está registrado ${info.teamRoleId ? `en <@&${info.teamRoleId}>` : "como agente libre"}. Usa /jugador modificar.`);
+    const role = interaction.options.getRole("club");
+    if (role && !teams(guild.id)[role.id]) return esError(interaction, "Ese rol no es un club registrado.");
+    const nombres = ["jugador", ...Array.from({ length: 9 }, (_, i) => `jugador${i + 2}`)];
+    const usuarios = [...new Map(nombres.map(n => interaction.options.getUser(n)).filter(Boolean).map(u => [u.id, u])).values()];
+    const extra = {};
+    for (const k of ["posicion", "clausula", "temporadas"]) {
+      const v = interaction.options.getString(k);
+      if (v) extra[k] = v;
     }
-    const posicion = interaction.options.getString("posicion");
-    r[user.id] = { teamRoleId: null, type: "Agente libre", values: posicion ? { posicion } : {}, since: new Date().toISOString() };
+    await interaction.deferReply({ ephemeral: true });
+    const hechos = [];
+    const saltados = [];
+    for (const u of usuarios) {
+      const prev = r[u.id];
+      if (u.bot) { saltados.push(`<@${u.id}> (es un bot)`); continue; }
+      if (prev && !role) { saltados.push(`<@${u.id}> (ya registrado: usa /jugador modificar)`); continue; }
+      const values = { ...(prev?.values || {}), ...extra };
+      if (role) {
+        await esCambiarRol(guild, u.id, prev?.teamRoleId, role.id);
+        r[u.id] = { teamRoleId: role.id, type: "Añadido manualmente", values, since: new Date().toISOString() };
+      } else {
+        r[u.id] = { teamRoleId: null, type: "Agente libre", values, since: new Date().toISOString() };
+      }
+      hechos.push(`<@${u.id}>`);
+    }
     saveRoster(guild.id, r);
-    return interaction.reply({ content: `✅ <@${user.id}> inscrito como **agente libre**${posicion ? ` (${posicion})` : ""}.`, ephemeral: true });
+    const partes = [];
+    if (hechos.length) partes.push(`✅ ${hechos.join(", ")} ${role ? `añadido(s) a <@&${role.id}>` : "inscrito(s) como agente(s) libre(s)"}${Object.keys(extra).length ? ` (${Object.values(extra).join(" | ")})` : ""}.`);
+    if (saltados.length) partes.push(`⚠️ No añadidos: ${saltados.join(", ")}`);
+    return interaction.editReply(partes.join("\n"));
   }
 
   if (!info) return esError(interaction, `<@${user.id}> no está registrado en el bot. Usa /jugador añadir.`);
@@ -1476,6 +1156,72 @@ async function esComandoMercado(interaction) {
       components: [esBotonesConfirmar("es_conf:fin_temporada", "Sí, cerrar temporada")],
       ephemeral: true
     });
+  }
+
+  if (sub === "revertir") return revertOperation(interaction, interaction.options.getInteger("numero"));
+}
+
+// ----- /contrato -----
+async function esComandoContrato(interaction) {
+  const sub = interaction.options.getSubcommand();
+  const guild = interaction.guild;
+  const t = teams(guild.id);
+  const r = roster(guild.id);
+
+  if (!esPuede(interaction, "director")) return esSinPermiso(interaction, "director");
+  const user = interaction.options.getUser("jugador");
+  const info = r[user.id];
+  if (!info?.teamRoleId) return esError(interaction, "Ese jugador no tiene club.");
+  const club = info.cesion ? info.cesion.origenRoleId : info.teamRoleId; // el club dueño de su contrato
+  if (!t[club]?.owners?.includes(interaction.user.id) && !esPuede(interaction, "staff")) {
+    return esError(interaction, "Solo el director de su club (o el staff) puede hacerlo.");
+  }
+
+  if (sub === "renovar") {
+    const values = { temporadas: interaction.options.getString("temporadas") };
+    const clausula = interaction.options.getString("clausula");
+    if (clausula) values.clausula = clausula;
+    return esIniciarOp(interaction, {
+      tipo: "renovacion", jugadorId: user.id, origenRoleId: club, destinoRoleId: club, precio: 0, values,
+      pasos: [{ tipo: "usuario", userId: user.id }]
+    });
+  }
+
+  if (sub === "clausula") {
+    const nueva = interaction.options.getString("clausula");
+    const actual = info.values?.clausula || null;
+    if (actual === nueva) return esError(interaction, `Ya tiene una cláusula de ${nueva}.`);
+    return esIniciarOp(interaction, {
+      tipo: "cambio_clausula", jugadorId: user.id, origenRoleId: club, destinoRoleId: club, precio: 0,
+      clausulaAnterior: actual, values: { clausula: nueva },
+      pasos: [{ tipo: "usuario", userId: user.id }]
+    });
+  }
+
+  if (sub === "rescindir") {
+    const motivoBase = interaction.options.getString("motivo");
+    const detalle = interaction.options.getString("detalle");
+    const motivo = motivoBase === "Otro" ? detalle || "Otro" : detalle ? `${motivoBase} — ${detalle}` : motivoBase;
+    const prevValues = { ...(info.values || {}) };
+    await interaction.deferReply({ ephemeral: true });
+    await esCambiarRol(guild, user.id, info.teamRoleId, null);
+    esLiberar(info);
+    saveRoster(guild.id, r);
+
+    const c = cfg(guild.id);
+    c.transferNumber += 1;
+    const numero = c.transferNumber;
+    saveCfg(guild.id, c);
+    const transfers = read(TRANSFERS_FILE);
+    transfers.push({
+      id: numero, guildId: guild.id, type: "Rescindir", senderId: interaction.user.id, targetId: user.id,
+      teamRoleId: null, prevTeamRoleId: club, prevValues, price: 0, values: { motivo },
+      confirmedAt: new Date().toISOString(), reverted: false
+    });
+    write(TRANSFERS_FILE, transfers);
+    await esEnviarCanal(guild, c.transferChannel, `❌ | **Operación #${numero}** — Rescisión\n👤 <@${user.id}>\n🏳️ Antiguo club: **${esClubNombre(guild, club)}**\n📋 Motivo: **${motivo}**`);
+    await esAvisar(user.id, `❌ Tu contrato con **${esClubNombre(guild, club)}** ha sido rescindido. Motivo: **${motivo}**. Ahora eres agente libre.`);
+    return interaction.editReply(`✅ Operación #${numero} — contrato de <@${user.id}> rescindido. Motivo: **${motivo}**. Ahora es agente libre.`);
   }
 }
 
@@ -1607,14 +1353,14 @@ async function esComandoAyuda(interaction) {
     .addFields(
       { name: "🏆 /club", value: "`crear` · `presupuesto` · `presupuestos` · `info` · `lista` · `renombrar` · `eliminar`\nCrear y gestionar clubes y sus presupuestos." },
       { name: "👔 /director", value: "`asignar` · `lista` · `quitar`\nQuién dirige cada club. Los directores proponen traspasos y cesiones." },
-      { name: "👤 /jugador", value: "`añadir` · `info` · `libres` · `lista` · `modificar` · `quitar`\nInscribir agentes libres, ver plantillas y editar contratos." },
-      { name: "🛒 /mercado", value: "`abrir` · `cerrar` · `estado` · `fin_temporada`\nLos traspasos y cesiones solo funcionan con el mercado abierto." },
-      { name: "💸 /traspaso", value: "`proponer` — el club vendedor y el jugador deben aceptar por MD.\n`clausula` — pagas la cláusula y solo el jugador debe aceptar." },
+      { name: "👤 /jugador", value: "`añadir` · `info` · `libres` · `lista` · `modificar` · `quitar`\nInscribir jugadores (libres o en un club, hasta 10 a la vez), ver plantillas y editar datos." },
+      { name: "💸 /traspaso", value: "`proponer` — fichar a un jugador (o agente libre); el club vendedor y el jugador aceptan por MD.\n`clausula` — pagas la cláusula y solo el jugador debe aceptar." },
       { name: "🔄 /cesion", value: "`proponer` · `terminar` · `lista`\nCesiones entre clubes; el fin anticipado necesita el acuerdo de los 2 clubes." },
-      { name: "⚙️ /config", value: "`rol_staff` · `rol_ayudante` · `rol_director` · `quitar_rol_…` · `ver`\nQuién puede usar cada comando (solo administradores)." },
-      { name: "📋 Menú clásico", value: "`/menu` · `/personalizar` · `/añadirequipo` · `/quitarequipo` · `/dueño` · `/añadirjugador` · `/plantilla` · `/personalizarpresupuesto`" }
+      { name: "✍️ /contrato", value: "`renovar` · `clausula` (subir o bajar) — el jugador acepta por MD.\n`rescindir` — el jugador queda libre al momento." },
+      { name: "🛒 /mercado", value: "`abrir` · `cerrar` · `estado` · `fin_temporada` · `revertir`\nTraspasos y cesiones solo con el mercado abierto. `revertir` deshace una operación por su número." },
+      { name: "⚙️ /config", value: "`rol_staff` · `rol_ayudante` · `rol_director` · `quitar_rol_…` · `canal_fichajes` · `canal_presupuestos` · `canal_logs` · `nombre_bot` · `ver`\nPermisos, canales y nombre del bot (solo administradores)." }
     )
-    .setFooter({ text: "Staff: gestiona el bot · Ayudantes: gestionan jugadores · Directores: traspasos y cesiones" });
+    .setFooter({ text: "Staff: gestiona el bot · Ayudantes: gestionan jugadores · Directores: traspasos, cesiones y contratos" });
   return interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
@@ -1636,6 +1382,7 @@ async function manejarComandosES(interaction) {
     mercado: esComandoMercado,
     cesion: esComandoCesion,
     traspaso: esComandoTraspaso,
+    contrato: esComandoContrato,
     ayuda: esComandoAyuda
   };
   const handler = handlers[interaction.commandName];
@@ -1657,464 +1404,20 @@ client.on("interactionCreate", async interaction => {
   try {
     // comandos en español (/club, /config, /director, /jugador, /mercado, /cesion, /traspaso, /ayuda)
     if (await manejarComandosES(interaction)) return;
+  } catch (error) {
+    console.error(error);
+    const message = { content: "❌ Ha ocurrido un error. Revisa la configuración y los permisos del bot.", ephemeral: true };
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp(message).catch(() => {});
+    } else {
+      await interaction.reply(message).catch(() => {});
+    }
+  }
+});
 
-    // /menu
-    if (interaction.isChatInputCommand() && interaction.commandName === "menu") {
-      if (!interaction.guildId) {
-        return interaction.reply({ content: "❌ Usa este comando dentro de un servidor.", ephemeral: true });
+if (!process.env.TOKEN || !process.env.CLIENT_ID) {
+  console.error("❌ Falta el token (TOKEN, DISCORD_BOT_TOKEN o BOT_TOKEN) o el ID (CLIENT_ID o BOT_ID) en las variables de entorno.");
+  process.exit(1);
+} else {
+  client.login(process.env.TOKEN);
       }
-      const c = cfg(interaction.guildId);
-      const hasRole = c.fichajeRole && interaction.member.roles.cache.has(c.fichajeRole);
-      const isManager = interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
-      if (c.fichajeRole && !hasRole && !isManager) {
-        return interaction.reply({ content: "❌ No tienes el rol necesario para usar este comando.", ephemeral: true });
-      }
-      const isOwner = ownedTeams(interaction.guildId, interaction.user.id).length > 0;
-      return interaction.reply({
-        embeds: [new EmbedBuilder().setTitle("📋 ¿Qué quieres hacer?").setDescription("Selecciona una opción.")],
-        components: [mainMenu(isOwner, isManager)],
-        ephemeral: true
-      });
-    }
-
-    // /personalizar
-    if (interaction.isChatInputCommand() && interaction.commandName === "personalizar") {
-      const row = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("customize")
-          .setPlaceholder("Selecciona qué quieres configurar")
-          .addOptions(
-            { label: "Canal de fichajes", value: "transfer_channel", emoji: "📢" },
-            { label: "Canal de presupuestos", value: "budget_channel", emoji: "💰" },
-            { label: "Canal de logs de ofertas", value: "offers_log_channel", emoji: "📨" },
-            { label: "Nombre del bot en este servidor", value: "bot_name", emoji: "🏷️" },
-            { label: "Rol permitido para /menu", value: "ficha_role", emoji: "🔑" },
-            { label: "Cómo se usa el bot", value: "help_panel", emoji: "❓" }
-          )
-      );
-      return interaction.reply({ content: "⚙️ Panel de personalización", components: [row], ephemeral: true });
-    }
-
-    // /añadirequipo
-    if (interaction.isChatInputCommand() && interaction.commandName === "añadirequipo") {
-      const role = interaction.options.getRole("equipo");
-      const owner1 = interaction.options.getUser("dueño1");
-      const owner2 = interaction.options.getUser("dueño2");
-      const players = ["jugador1", "jugador2", "jugador3", "jugador4", "jugador5"]
-        .map(name => interaction.options.getUser(name))
-        .filter(Boolean);
-
-      const t = teams(interaction.guildId);
-      const owners = [owner1?.id, owner2?.id].filter(Boolean);
-      t[role.id] = { roleId: role.id, budget: 50000000, owners };
-      saveTeams(interaction.guildId, t);
-
-      if (players.length > 0) {
-        const r = roster(interaction.guildId);
-        for (const player of players) {
-          r[player.id] = { teamRoleId: role.id, type: "Añadido manualmente", values: {}, since: new Date().toISOString() };
-        }
-        saveRoster(interaction.guildId, r);
-      }
-
-      await updateBudgetPanel(interaction.guild);
-
-      const partes = [`✅ Equipo <@&${role.id}> añadido con **50M**.`];
-      if (owners.length) partes.push(`👑 Dueño(s): ${owners.map(id => `<@${id}>`).join(", ")}`);
-      if (players.length) partes.push(`👤 Jugador(es): ${players.map(p => `<@${p.id}>`).join(", ")}`);
-
-      return interaction.reply({ content: partes.join("\n"), ephemeral: true });
-    }
-
-    // /personalizarpresupuesto
-    if (interaction.isChatInputCommand() && interaction.commandName === "personalizarpresupuesto") {
-      const row = new ActionRowBuilder().addComponents(
-        new RoleSelectMenuBuilder()
-          .setCustomId("budget_role")
-          .setPlaceholder("Selecciona el club")
-          .setMinValues(1).setMaxValues(1)
-      );
-      return interaction.reply({ content: "💰 Selecciona el club cuyo presupuesto quieres modificar.", components: [row], ephemeral: true });
-    }
-
-    // /dueño
-    if (interaction.isChatInputCommand() && interaction.commandName === "dueño") {
-      const role = interaction.options.getRole("equipo");
-      const owner1 = interaction.options.getUser("dueño1");
-      const owner2 = interaction.options.getUser("dueño2");
-
-      const t = teams(interaction.guildId);
-      if (!t[role.id]) {
-        return interaction.reply({ content: "❌ Ese equipo no está añadido. Usa /añadirequipo primero.", ephemeral: true });
-      }
-
-      t[role.id].owners = [owner1.id, owner2?.id].filter(Boolean);
-      saveTeams(interaction.guildId, t);
-
-      return interaction.reply({
-        content: `✅ Dueño(s) de <@&${role.id}> actualizados: ${t[role.id].owners.map(id => `<@${id}>`).join(", ")}`,
-        ephemeral: true
-      });
-    }
-
-    // /plantilla
-    if (interaction.isChatInputCommand() && interaction.commandName === "plantilla") {
-      const role = interaction.options.getRole("equipo");
-      const embed = buildPlantillaEmbed(interaction.guildId, role);
-      return interaction.reply({ embeds: [embed] });
-    }
-
-    // /añadirjugador
-    if (interaction.isChatInputCommand() && interaction.commandName === "añadirjugador") {
-      const role = interaction.options.getRole("equipo");
-      const clausula = interaction.options.getString("clausula");
-      const temporadas = interaction.options.getString("temporadas");
-      const players = ["jugador1", "jugador2", "jugador3", "jugador4", "jugador5", "jugador6", "jugador7", "jugador8", "jugador9", "jugador10"]
-        .map(name => interaction.options.getUser(name))
-        .filter(Boolean);
-
-      const t = teams(interaction.guildId);
-      if (!t[role.id]) {
-        return interaction.reply({ content: "❌ Ese equipo no está añadido. Usa /añadirequipo primero.", ephemeral: true });
-      }
-
-      const values = {};
-      if (clausula) values.clausula = clausula;
-      if (temporadas) values.temporadas = temporadas;
-
-      const r = roster(interaction.guildId);
-      for (const player of players) {
-        r[player.id] = {
-          teamRoleId: role.id,
-          type: "Añadido manualmente",
-          values,
-          since: new Date().toISOString()
-        };
-      }
-      saveRoster(interaction.guildId, r);
-
-      const detalles = [clausula ? `Cláusula: ${clausula}` : null, temporadas ? `Temporadas: ${temporadas}` : null].filter(Boolean).join(" | ");
-      return interaction.reply({
-        content: `✅ ${players.map(p => `<@${p.id}>`).join(", ")} añadido(s) a <@&${role.id}>${detalles ? ` (${detalles})` : " (sin cláusula ni temporadas)"}.`,
-        ephemeral: true
-      });
-    }
-
-    // /quitarequipo
-    if (interaction.isChatInputCommand() && interaction.commandName === "quitarequipo") {
-      const role = interaction.options.getRole("equipo");
-      const t = teams(interaction.guildId);
-
-      if (!t[role.id]) {
-        return interaction.reply({ content: "❌ Ese equipo no estaba añadido.", ephemeral: true });
-      }
-
-      delete t[role.id];
-      saveTeams(interaction.guildId, t);
-
-      const r = roster(interaction.guildId);
-      let freed = 0;
-      for (const [playerId, info] of Object.entries(r)) {
-        if (info.teamRoleId === role.id) {
-          delete r[playerId];
-          freed++;
-        }
-      }
-      saveRoster(interaction.guildId, r);
-
-      await updateBudgetPanel(interaction.guild);
-
-      return interaction.reply({
-        content: `✅ Equipo <@&${role.id}> eliminado. ${freed} jugador(es) han quedado libres.`,
-        ephemeral: true
-      });
-    }
-
-    // menú de tipo (en el canal del servidor)
-    if (interaction.isStringSelectMenu() && interaction.customId === "transfer_type") {
-      const type = interaction.values[0];
-
-      // revertir fichaje (solo administradores)
-      if (type === "Revertir fichaje") {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-          return interaction.reply({ content: "❌ No tienes permiso para revertir operaciones.", ephemeral: true });
-        }
-        const modal = new ModalBuilder().setCustomId("revert_modal").setTitle("Revertir operación");
-        modal.addComponents(new ActionRowBuilder().addComponents(
-          new TextInputBuilder().setCustomId("numero").setLabel("Número de operación (ej: 5)").setStyle(TextInputStyle.Short).setRequired(true)
-        ));
-        return interaction.showModal(modal);
-      }
-
-      // ver mi plantilla (no requiere formulario)
-      if (type === "Mi plantilla") {
-        const mine = ownedTeams(interaction.guildId, interaction.user.id);
-        if (mine.length === 0) {
-          return interaction.reply({ content: "❌ No eres dueño de ningún club.", ephemeral: true });
-        }
-        if (mine.length === 1) {
-          const role = interaction.guild.roles.cache.get(mine[0].roleId);
-          if (!role) return interaction.reply({ content: "❌ No encontré el rol de tu club.", ephemeral: true });
-          const embed = buildPlantillaEmbed(interaction.guildId, role);
-          return interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-        const options = mine
-          .map(team => {
-            const role = interaction.guild.roles.cache.get(team.roleId);
-            return role ? { label: role.name.slice(0, 100), value: team.roleId } : null;
-          })
-          .filter(Boolean);
-        const row = new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId("own_roster_pick")
-            .setPlaceholder("¿De qué club quieres ver la plantilla?")
-            .addOptions(options)
-        );
-        return interaction.reply({ content: "📋 Selecciona el club.", components: [row], ephemeral: true });
-      }
-
-      const pending = read(PENDING_FILE);
-      pending[interaction.user.id] = { type, step: "user", originGuildId: interaction.guildId };
-      write(PENDING_FILE, pending);
-
-      // Rescindir: si eres dueño de un club, solo se muestran tus jugadores (sin elegir club)
-      if (type === "Rescindir") {
-        const mine = ownedTeams(interaction.guildId, interaction.user.id);
-
-        if (mine.length === 1) {
-          const embedOptions = await buildOwnPlayersOptions(interaction, mine[0].roleId);
-          if (embedOptions === null) {
-            return interaction.reply({ content: "❌ No pude obtener la lista de miembros del servidor.", ephemeral: true });
-          }
-          if (embedOptions.length === 0) {
-            return interaction.reply({ content: "❌ Tu club no tiene jugadores fichados.", ephemeral: true });
-          }
-          const row = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-              .setCustomId("transfer_user_own")
-              .setPlaceholder("¿A qué jugador quieres rescindir?")
-              .addOptions(embedOptions)
-          );
-          return interaction.reply({ content: `👤 **${type}**\nSelecciona al jugador.`, components: [row], ephemeral: true });
-        }
-
-        if (mine.length > 1) {
-          const options = mine
-            .map(team => {
-              const role = interaction.guild.roles.cache.get(team.roleId);
-              return role ? { label: role.name.slice(0, 100), value: team.roleId } : null;
-            })
-            .filter(Boolean);
-          const row = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-              .setCustomId("rescind_club_pick")
-              .setPlaceholder("¿De qué club quieres rescindir?")
-              .addOptions(options)
-          );
-          return interaction.reply({ content: "❌ Selecciona el club.", components: [row], ephemeral: true });
-        }
-        // si no eres dueño de ningún club, sigue el flujo normal (cualquier usuario)
-      }
-
-      const row = new ActionRowBuilder().addComponents(
-        new UserSelectMenuBuilder()
-          .setCustomId("transfer_user")
-          .setPlaceholder("¿A quién quieres enviar la operación?")
-          .setMinValues(1).setMaxValues(1)
-      );
-
-      return interaction.reply({
-        content: `👤 **${type}**\nSelecciona al usuario.`,
-        components: [row],
-        ephemeral: true
-      });
-    }
-
-    // plantilla propia (cuando el dueño tiene más de un club)
-    if (interaction.isStringSelectMenu() && interaction.customId === "own_roster_pick") {
-      const role = interaction.guild.roles.cache.get(interaction.values[0]);
-      if (!role) return interaction.reply({ content: "❌ No encontré el rol de tu club.", ephemeral: true });
-      const embed = buildPlantillaEmbed(interaction.guildId, role);
-      return interaction.update({ content: null, embeds: [embed], components: [] });
-    }
-
-    // rescindir: club elegido cuando el dueño tiene varios clubes
-    if (interaction.isStringSelectMenu() && interaction.customId === "rescind_club_pick") {
-      const roleId = interaction.values[0];
-      const options = await buildOwnPlayersOptions(interaction, roleId);
-      if (options === null) {
-        return interaction.update({ content: "❌ No pude obtener la lista de miembros del servidor.", components: [] });
-      }
-      if (options.length === 0) {
-        return interaction.update({ content: "❌ Ese club no tiene jugadores fichados.", components: [] });
-      }
-
-      const pending = read(PENDING_FILE);
-      pending[interaction.user.id] = { type: "Rescindir", step: "user", originGuildId: interaction.guildId };
-      write(PENDING_FILE, pending);
-
-      const row = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("transfer_user_own")
-          .setPlaceholder("¿A qué jugador quieres rescindir?")
-          .addOptions(options)
-      );
-      return interaction.update({ content: "👤 **Rescindir**\nSelecciona al jugador.", components: [row] });
-    }
-
-    // usuario seleccionado (flujo normal)
-    if (interaction.isUserSelectMenu() && interaction.customId === "transfer_user") {
-      const pending = read(PENDING_FILE);
-      const data = pending[interaction.user.id];
-      if (!data) return interaction.reply({ content: "❌ La sesión ha caducado.", ephemeral: true });
-
-      // en fichaje libre no se puede fichar a alguien que ya tiene club
-      if (data.type === "Fichaje libre") {
-        const r = roster(interaction.guildId);
-        if (r[interaction.values[0]]?.teamRoleId) {
-          return interaction.reply({ content: "❌ Ese jugador ya está fichado en un club, no está libre.", ephemeral: true });
-        }
-      }
-
-      data.targetId = interaction.values[0];
-      pending[interaction.user.id] = data;
-      write(PENDING_FILE, pending);
-
-      return continueAfterTarget(interaction, data);
-    }
-
-    // usuario seleccionado (rescindir, solo tus propios jugadores)
-    if (interaction.isStringSelectMenu() && interaction.customId === "transfer_user_own") {
-      const pending = read(PENDING_FILE);
-      const data = pending[interaction.user.id];
-      if (!data) return interaction.reply({ content: "❌ La sesión ha caducado.", ephemeral: true });
-
-      data.targetId = interaction.values[0];
-      pending[interaction.user.id] = data;
-      write(PENDING_FILE, pending);
-
-      return continueAfterTarget(interaction, data);
-    }
-
-    // equipo seleccionado
-    if (interaction.isStringSelectMenu() && interaction.customId === "transfer_team") {
-      const pending = read(PENDING_FILE);
-      const data = pending[interaction.user.id];
-      if (!data) return interaction.reply({ content: "❌ La sesión ha caducado.", ephemeral: true });
-
-      data.teamRoleId = interaction.values[0];
-      data.teamRoleName = interaction.guild.roles.cache.get(data.teamRoleId)?.name || "Equipo";
-      return continueFlow(interaction, data);
-    }
-
-    // cláusula seleccionada
-    if (interaction.isStringSelectMenu() && interaction.customId === "select_clausula") {
-      const pending = read(PENDING_FILE);
-      const data = pending[interaction.user.id];
-      if (!data) return interaction.reply({ content: "❌ La sesión ha caducado.", ephemeral: true });
-
-      data.values = data.values || {};
-      data.values.clausula = interaction.values[0];
-      return continueFlow(interaction, data);
-    }
-
-    // temporadas seleccionadas
-    if (interaction.isStringSelectMenu() && interaction.customId === "select_temporadas") {
-      const pending = read(PENDING_FILE);
-      const data = pending[interaction.user.id];
-      if (!data) return interaction.reply({ content: "❌ La sesión ha caducado.", ephemeral: true });
-
-      data.values = data.values || {};
-      data.values.temporadas = interaction.values[0];
-      return continueFlow(interaction, data);
-    }
-
-    // duración de la cesión seleccionada (1 partido a 3 temporadas)
-    if (interaction.isStringSelectMenu() && interaction.customId === "select_cesion_duracion") {
-      const pending = read(PENDING_FILE);
-      const data = pending[interaction.user.id];
-      if (!data) return interaction.reply({ content: "❌ La sesión ha caducado.", ephemeral: true });
-
-      data.values = data.values || {};
-      data.values.temporadas = interaction.values[0];
-      return continueFlow(interaction, data);
-    }
-
-    // motivo de rescindir seleccionado -> ejecuta ya, sin confirmar ni pedir aceptación
-    if (interaction.isStringSelectMenu() && interaction.customId === "rescind_reason") {
-      const pending = read(PENDING_FILE);
-      const data = pending[interaction.user.id];
-      if (!data) return interaction.reply({ content: "❌ La sesión ha caducado.", ephemeral: true });
-
-      const reason = interaction.values[0];
-      if (reason === "Otro") {
-        const modal = new ModalBuilder().setCustomId("rescind_reason_modal").setTitle("Motivo de la rescisión");
-        modal.addComponents(new ActionRowBuilder().addComponents(
-          new TextInputBuilder().setCustomId("motivo").setLabel("Especifica el motivo").setStyle(TextInputStyle.Short).setRequired(true)
-        ));
-        return interaction.showModal(modal);
-      }
-
-      return executeRescission(interaction, data, reason);
-    }
-
-    if (interaction.isModalSubmit() && interaction.customId === "rescind_reason_modal") {
-      const pending = read(PENDING_FILE);
-      const data = pending[interaction.user.id];
-      if (!data) return interaction.reply({ content: "❌ La sesión ha caducado.", ephemeral: true });
-
-      const motivo = interaction.fields.getTextInputValue("motivo");
-      return executeRescission(interaction, data, motivo);
-    }
-
-    // revertir operación: número enviado
-    if (interaction.isModalSubmit() && interaction.customId === "revert_modal") {
-      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        return interaction.reply({ content: "❌ No tienes permiso para revertir operaciones.", ephemeral: true });
-      }
-      const raw = interaction.fields.getTextInputValue("numero").replace("#", "").trim();
-      const transferId = parseInt(raw, 10);
-      if (!transferId || isNaN(transferId)) {
-        return interaction.reply({ content: "❌ Número de operación inválido.", ephemeral: true });
-      }
-      return revertOperation(interaction, transferId);
-    }
-
-    // formulario operación (solo precio/motivo cuando aplica) -> se envía directo por MD, sin paso extra de confirmar
-    if (interaction.isModalSubmit() && interaction.customId.startsWith("transfer_modal:")) {
-      const pending = read(PENDING_FILE);
-      const data = pending[interaction.user.id];
-      if (!data) return interaction.reply({ content: "❌ La sesión ha caducado.", ephemeral: true });
-
-      data.values = data.values || {};
-      for (const field of interaction.fields.fields.values()) {
-        data.values[field.customId] = field.value;
-      }
-
-      return finalizeOffer(interaction, data);
-    }
-
-    // aceptar/rechazar
-    if (interaction.isButton() && (interaction.customId.startsWith("approve:") || interaction.customId.startsWith("reject:"))) {
-      const [action, pendingId] = interaction.customId.split(":");
-      const pending = read(PENDING_FILE);
-      const data = pending[`approval:${pendingId}`];
-
-      if (!data) return interaction.reply({ content: "❌ Esta solicitud ya no existe.", ephemeral: true });
-      if (interaction.user.id !== data.targetId) return interaction.reply({ content: "❌ Esta solicitud no es para ti.", ephemeral: true });
-
-      if (action === "reject") {
-        delete pending[`approval:${pendingId}`];
-        write(PENDING_FILE, pending);
-
-        if (data.guildId) {
-          const logGuild = client.guilds.cache.get(data.guildId);
-          if (logGuild) {
-            const cLog = cfg(data.guildId);
-            if (cLog.offersLogChannel) {
-              const logChannel = await logGuild.channels.fetch(cLog.offersLogChannel).catch(() => null);
-              if (logChannel?.isTextBased()) {
-                await logChannel.send(`❌ **Oferta rechazada**\nTipo: **${data.type}**\nDe: <@${data.senderId}> → Para: <@${data.targetId}>`).catch(() => {});
-              }
-            }
-        
