@@ -329,17 +329,27 @@ function ownedTeams(guildId, userId) {
 // revierte una operación ya confirmada (solo administradores)
 async function revertOperation(interaction, transferId) {
   const guildId = interaction.guildId;
+  const responder = content => (interaction.deferred || interaction.replied ? interaction.editReply({ content }) : interaction.reply({ content, ephemeral: true }));
   const transfers = read(TRANSFERS_FILE);
   const t = transfers.find(x => x.id === transferId && x.guildId === guildId);
 
-  if (!t) return interaction.reply({ content: "❌ No encontré esa operación en este servidor.", ephemeral: true });
-  if (t.reverted) return interaction.reply({ content: "❌ Esa operación ya fue revertida antes.", ephemeral: true });
+  if (!t) return responder("❌ No encontré esa operación en este servidor.");
+  if (t.reverted) return responder("❌ Esa operación ya fue revertida antes.");
   if (["Subida de Cláusula", "Bajada de Cláusula", "Fin de cesión", "Renovación", "Cambio de cláusula"].includes(t.type)) {
-    return interaction.reply({ content: "❌ Ese tipo de operación no se puede revertir.", ephemeral: true });
+    return responder("❌ Ese tipo de operación no se puede revertir.");
   }
 
   const guild = client.guilds.cache.get(guildId);
-  if (!guild) return interaction.reply({ content: "❌ No pude acceder al servidor.", ephemeral: true });
+  if (!guild) return responder("❌ No pude acceder al servidor.");
+
+  // presupuestos antes de revertir, para el resumen
+  const nombre = id => (id ? `**${guild.roles.cache.get(id)?.name || "Club eliminado"}**` : "**Agente Libre**");
+  const dinero = id => {
+    const b = id ? teams(guildId)[id]?.budget : undefined;
+    return b === undefined ? "N/A" : `${esDinero1(b)}€`;
+  };
+  const antesVuelve = dinero(t.prevTeamRoleId);
+  const antesDeja = dinero(t.teamRoleId);
 
   const r = roster(guildId);
   const member = await guild.members.fetch(t.targetId).catch(() => null);
@@ -364,7 +374,7 @@ async function revertOperation(interaction, transferId) {
       if (t.teamRoleId && teamsData[t.teamRoleId]) teamsData[t.teamRoleId].budget += t.price;
       if (t.prevTeamRoleId && teamsData[t.prevTeamRoleId]) teamsData[t.prevTeamRoleId].budget -= t.price;
       saveTeams(guildId, teamsData);
-      await updateBudgetPanel(guild);
+      updateBudgetPanel(guild).catch(() => {});
     }
   }
 
@@ -372,15 +382,14 @@ async function revertOperation(interaction, transferId) {
   t.reverted = true;
   write(TRANSFERS_FILE, transfers);
 
-  const c = cfg(guildId);
-  if (c.transferChannel) {
-    const channel = await guild.channels.fetch(c.transferChannel).catch(() => null);
-    if (channel?.isTextBased()) {
-      await channel.send({ content: `**Operación ${t.id} revertida**: ${t.type === "Rescindir" ? "Rescisión" : t.type} de <@${t.targetId}>${t.prevTeamRoleId ? `, vuelve a <@&${t.prevTeamRoleId}>` : ", queda como agente libre"}.`, allowedMentions: { parse: ["users"] } }).catch(() => {});
-    }
-  }
-
-  return interaction.reply({ content: `**Operación ${t.id} revertida**: ${t.type === "Rescindir" ? "Rescisión" : t.type} de <@${t.targetId}>.`, ephemeral: true });
+  const titulo = { "Traspaso": "¡Traspaso revertido!", "Cláusula pagada": "¡Pago de cláusula revertido!", "Cesión": "¡Cesión revertida!", "Rescindir": "¡Rescisión revertida!" }[t.type] || "¡Operación revertida!";
+  const texto =
+    `🔄 **${titulo}** Oferta ID **${t.id}**. El jugador <@${t.targetId}> ha regresado a ${nombre(t.prevTeamRoleId)}.\n` +
+    `Ajustes de Presupuesto:\n` +
+    `• ${nombre(t.prevTeamRoleId)}: ${antesVuelve} → ${dinero(t.prevTeamRoleId)}\n` +
+    `• ${nombre(t.teamRoleId)}: ${antesDeja} → ${dinero(t.teamRoleId)}`;
+  await esEnviarCanal(guild, cfg(guildId).transferChannel, texto);
+  return responder(texto);
 }
 
 // =====================================================================
@@ -552,6 +561,7 @@ function esMensajeOferta(op, guild) {
 function esDinero1(v) {
   const n = typeof v === "number" ? v : money(v);
   if (!Number.isFinite(n)) return String(v);
+  if (n < 0) return `-${esDinero1(-n)}`;
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
   return String(n);
@@ -585,13 +595,13 @@ function esBotonesOferta(id) {
 async function esEnviarPaso(op) {
   const guild = client.guilds.cache.get(op.guildId);
   const contenido = esMensajeOferta(op, guild);
-  let enviados = 0;
-  for (const id of esAprobadores(op)) {
+  const components = [esBotonesOferta(op.id)];
+  // todos los MD a la vez, no uno detrás de otro
+  const resultados = await Promise.all(esAprobadores(op).map(async id => {
     const user = await client.users.fetch(id).catch(() => null);
-    const ok = user ? await user.send({ content: contenido, components: [esBotonesOferta(op.id)] }).then(() => true).catch(() => false) : false;
-    if (ok) enviados++;
-  }
-  return enviados;
+    return user ? user.send({ content: contenido, components }).then(() => true).catch(() => false) : false;
+  }));
+  return resultados.filter(Boolean).length;
 }
 
 // ----- renegociar: formulario con las condiciones que se pueden cambiar -----
@@ -663,16 +673,15 @@ async function esModalRenegEnviado(interaction) {
   pending[`op:${id}`] = op;
   write(PENDING_FILE, pending);
 
-  const desdeMensaje = interaction.isFromMessage();
-  await (desdeMensaje ? interaction.deferUpdate() : interaction.deferReply({ ephemeral: true }));
   const guild = client.guilds.cache.get(op.guildId);
+  const aviso = { content: `🔄 Contraoferta enviada a ${esQuienFalta(op, guild)}. Te avisaré cuando responda.\n\n${esDescribirOp(op, guild)}`, components: [] };
+  await (interaction.isFromMessage() ? interaction.update(aviso) : interaction.reply({ ...aviso, ephemeral: true }));
   const enviados = await esEnviarPaso(op);
   if (!enviados) {
     esBorrarOp(id);
     return interaction.editReply({ content: `❌ No pude enviar la contraoferta a ${esQuienFalta(op, guild)} por MD. La operación se canceló.`, components: [] });
   }
-  if (guild) await esEnviarCanal(guild, cfg(guild.id).offersLogChannel, `🔄 **Renegociación** de <@${interaction.user.id}>\n${esDescribirOp(op, guild)}`);
-  return interaction.editReply({ content: `🔄 Contraoferta enviada a ${esQuienFalta(op, guild)}. Te avisaré cuando responda.\n\n${esDescribirOp(op, guild)}`, components: [] });
+  if (guild) esEnviarCanal(guild, cfg(guild.id).offersLogChannel, `🔄 **Renegociación** de <@${interaction.user.id}>\n${esDescribirOp(op, guild)}`);
 }
 function esBorrarOp(id) {
   const pending = read(PENDING_FILE);
@@ -693,10 +702,9 @@ async function esIniciarOp(interaction, op) {
     }
   }
 
-  await interaction.deferReply({ ephemeral: true });
-
   // sin nadie más a quien preguntar (p. ej. diriges los dos clubes): se ejecuta ya
   if (!op.pasos.length) {
+    await interaction.reply({ content: "⏳ Procesando…", ephemeral: true });
     const res = await esEjecutarOp(op);
     return interaction.editReply(res.ok ? res.texto : `❌ ${res.msg}`);
   }
@@ -705,13 +713,17 @@ async function esIniciarOp(interaction, op) {
   pending[`op:${op.id}`] = op;
   write(PENDING_FILE, pending);
 
+  // se responde al momento y los MD se mandan justo después
+  await interaction.reply({
+    content: `📩 Propuesta enviada por MD a ${esQuienFalta(op, interaction.guild)}. Te avisaré cuando respondan.\n\n${esDescribirOp(op, interaction.guild)}`,
+    ephemeral: true
+  });
   const enviados = await esEnviarPaso(op);
   if (!enviados) {
     esBorrarOp(op.id);
     return interaction.editReply(`❌ No pude enviar la propuesta por MD a ${esQuienFalta(op, interaction.guild)} (puede que tengan los MD cerrados). Se ha cancelado.`);
   }
-  await esEnviarCanal(interaction.guild, cfg(op.guildId).offersLogChannel, `📨 **${ES_TITULOS[op.tipo]}** de <@${op.proponenteId}>\n${esDescribirOp(op, interaction.guild)}`);
-  return interaction.editReply(`📩 Propuesta enviada por MD a ${esQuienFalta(op, interaction.guild)}. Te avisaré cuando respondan.\n\n${esDescribirOp(op, interaction.guild)}`);
+  esEnviarCanal(interaction.guild, cfg(op.guildId).offersLogChannel, `📨 **${ES_TITULOS[op.tipo]}** de <@${op.proponenteId}>\n${esDescribirOp(op, interaction.guild)}`);
 }
 
 async function esEjecutarOp(op) {
@@ -831,17 +843,19 @@ async function esBotonOp(interaction) {
 
   if (accion === "es_no") {
     esBorrarOp(id);
+    await interaction.update({ content: `❌ Rechazaste la ${op.contra ? "contraoferta" : "oferta"}.\n\n${esDescribirOp(op, guild)}`, components: [] });
     // avisar a la otra parte
     const otros = op.contra ? esAprobadores({ ...op, contra: false }) : [op.proponenteId];
     for (const uid of otros) {
-      if (uid !== interaction.user.id) await esAvisar(uid, `❌ <@${interaction.user.id}> ha rescindido: **${ES_TITULOS[op.tipo]}**\n${esDescribirOp(op, guild)}`);
+      if (uid !== interaction.user.id) esAvisar(uid, `❌ <@${interaction.user.id}> ha rescindido: **${ES_TITULOS[op.tipo]}**\n${esDescribirOp(op, guild)}`);
     }
-    if (guild) await esEnviarCanal(guild, cfg(guild.id).offersLogChannel, `❌ **${ES_TITULOS[op.tipo]} rescindida** por <@${interaction.user.id}>\n${esDescribirOp(op, guild)}`);
-    return interaction.update({ content: `❌ Has rescindido: **${ES_TITULOS[op.tipo]}**\n\n${esDescribirOp(op, guild)}`, components: [] });
+    if (guild) esEnviarCanal(guild, cfg(guild.id).offersLogChannel, `❌ **${ES_TITULOS[op.tipo]} rescindida** por <@${interaction.user.id}>\n${esDescribirOp(op, guild)}`);
+    return;
   }
 
   // Confirmar (también cuando quien hizo la oferta acepta una contraoferta: ese paso queda aceptado)
-  await interaction.deferUpdate();
+  const aceptaste = `✅ Aceptaste la ${op.contra ? "contraoferta" : "oferta"}.`;
+  await interaction.update({ content: `${aceptaste} Procesando…`, components: [] });
   op.contra = false;
   op.mensaje = null;
   op.rondas = 0;
@@ -854,23 +868,23 @@ async function esBotonOp(interaction) {
     if (!enviados) {
       esBorrarOp(id);
       await esAvisar(op.proponenteId, `❌ Tu ${ES_TITULOS[op.tipo].toLowerCase()} se canceló: no pude enviar el MD a ${esQuienFalta(op, guild)}.`);
-      return interaction.editReply({ content: `✅ Confirmado, pero no pude enviar el MD a ${esQuienFalta(op, guild)}. La operación se canceló.`, components: [] });
+      return interaction.editReply({ content: `${aceptaste} Pero no pude enviar el MD a ${esQuienFalta(op, guild)} y la operación se canceló.`, components: [] });
     }
-    return interaction.editReply({ content: `✅ Confirmado. Ahora falta la respuesta de ${esQuienFalta(op, guild)}.\n\n${esDescribirOp(op, guild)}`, components: [] });
+    return interaction.editReply({ content: `${aceptaste} Ahora falta la respuesta de ${esQuienFalta(op, guild)}.\n\n${esDescribirOp(op, guild)}`, components: [] });
   }
 
   esBorrarOp(id);
   const res = await esEjecutarOp(op);
-  if (res.ok) {
-    if (op.proponenteId !== interaction.user.id) await esAvisar(op.proponenteId, res.textoMD);
-    if (guild) await esEnviarCanal(guild, cfg(guild.id).offersLogChannel, res.texto);
-  } else {
-    await esAvisar(op.proponenteId, `❌ No se pudo completar: **${ES_TITULOS[op.tipo]}** — ${res.msg}`);
-  }
-  return interaction.editReply({
-    content: res.ok ? res.textoMD : `❌ No se pudo completar: ${res.msg}`,
+  await interaction.editReply({
+    content: res.ok ? `${aceptaste}\n${res.textoMD}` : `${aceptaste} Pero no se pudo completar: ${res.msg}`,
     components: []
   });
+  if (res.ok) {
+    if (op.proponenteId !== interaction.user.id) esAvisar(op.proponenteId, res.textoMD);
+    if (guild) esEnviarCanal(guild, cfg(guild.id).offersLogChannel, res.texto);
+  } else {
+    esAvisar(op.proponenteId, `❌ No se pudo completar: **${ES_TITULOS[op.tipo]}** — ${res.msg}`);
+  }
 }
 
 function esBotonesConfirmar(id, textoSi) {
@@ -1326,7 +1340,10 @@ async function esComandoMercado(interaction) {
     });
   }
 
-  if (sub === "revertir") return revertOperation(interaction, interaction.options.getInteger("numero"));
+  if (sub === "revertir") {
+    await interaction.deferReply({ ephemeral: true });
+    return revertOperation(interaction, interaction.options.getInteger("numero"));
+  }
 }
 
 // ----- /contrato -----
