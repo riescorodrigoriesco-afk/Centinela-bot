@@ -38,7 +38,7 @@ const {
   Client, GatewayIntentBits, Partials, REST, Routes,
   SlashCommandBuilder, PermissionFlagsBits,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  ChannelType, EmbedBuilder
+  ChannelType, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle
 } = require("discord.js");
 
 const client = new Client({
@@ -489,34 +489,165 @@ function esDescribirOp(op, guild) {
   return lineas.join("\n");
 }
 function esAprobadores(op) {
+  if (op.contra) return [op.proponenteId]; // contraoferta: responde quien hizo la oferta
   const paso = op.pasos[op.paso];
   if (!paso) return [];
   if (paso.tipo === "club") return teams(op.guildId)[paso.roleId]?.owners || [];
   return [paso.userId];
 }
 function esQuienFalta(op, guild) {
+  if (op.contra) return `<@${op.proponenteId}>`;
   const paso = op.pasos[op.paso];
   if (!paso) return "nadie";
   return paso.tipo === "club" ? `los directores de **${esClubNombre(guild, paso.roleId)}**` : `<@${paso.userId}>`;
 }
+
+// ----- texto de los MD de ofertas -----
+const ES_CONTRATO_JUGADOR = ["traspaso", "clausula", "renovacion", "cambio_clausula"];
+// condiciones que se ofrecen: las nuevas o, si no cambian, las que ya tiene el jugador
+function esTerminos(op) {
+  const actual = roster(op.guildId)[op.jugadorId]?.values || {};
+  const temporadas = op.values?.temporadas || actual.temporadas || null;
+  return { temporadas: temporadas ? temporadas.replace(/^T/, "") : null, clausula: op.values?.clausula || actual.clausula || null };
+}
+function esContratoTexto(op) {
+  const { temporadas, clausula } = esTerminos(op);
+  return `un contrato${temporadas ? ` de **${temporadas}** Temporada(s)` : ""}${clausula ? ` con cláusula de **${clausula}**` : " sin cláusula"}`;
+}
+function esMensajeOferta(op, guild) {
+  const paso = op.pasos[op.paso];
+  const de = op.origenRoleId ? esClubNombre(guild, op.origenRoleId) : null;
+  const a = esClubNombre(guild, op.destinoRoleId);
+  const precio = op.precio ? `**${formatMoney(op.precio)}**` : "**0**";
+  const J = `<@${op.jugadorId}>`;
+  const extra = [];
+  let principal;
+  if (op.contra) {
+    const quien = paso.tipo === "club" ? `**${esClubNombre(guild, paso.roleId)}**` : J;
+    if (paso.tipo === "usuario" && ES_CONTRATO_JUGADOR.includes(op.tipo)) principal = `${quien} quiere renegociar: pide ${esContratoTexto(op)} ¿Aceptas?`;
+    else if (paso.tipo === "club" && op.tipo === "traspaso") principal = `${quien} quiere renegociar: pide ${precio} por ${J} ¿Aceptas?`;
+    else if (paso.tipo === "club" && op.tipo === "cesion") principal = `${quien} quiere renegociar: ofrece ${precio} por la cesión de ${J} durante **${op.duracion}** ¿Aceptas?`;
+    else principal = `${quien} quiere renegociar. ¿Seguimos con la operación?`;
+    extra.push(`📋 ${ES_TITULOS[op.tipo]} de ${J}`);
+  } else if (op.tipo === "traspaso" && paso.tipo === "club") {
+    principal = `**${a}** ofrece ${precio} por ${J} ¿Aceptas?`;
+    extra.push(`📝 Le ofrece ${esContratoTexto(op)}`);
+  } else if (op.tipo === "cesion" && paso.tipo === "club") {
+    principal = `**${de}** te ofrece la cesión de ${J} durante **${op.duracion}**${op.precio ? ` por ${precio}` : " gratis"} ¿Aceptas?`;
+  } else if (op.tipo === "cesion") {
+    principal = `**${a}** te ofrece una cesión de **${op.duracion}** ¿Aceptas?`;
+    extra.push(`🔄 Cedido por **${de}**${op.precio ? ` por ${precio}` : ""}`);
+  } else if (op.tipo === "fin_cesion") {
+    principal = `Se propone terminar ya la cesión de ${J}: vuelve de **${a}** a **${de}** ¿Aceptas?`;
+  } else {
+    principal = `**${ES_CONTRATO.includes(op.tipo) ? de : a}** te ofrece ${esContratoTexto(op)} ¿Aceptas?`;
+    if (op.tipo === "traspaso") extra.push(op.origenRoleId ? `🔁 Traspaso desde **${de}** por ${precio}` : "🆓 Fichaje como agente libre");
+    if (op.tipo === "clausula") extra.push(`💥 Han pagado tu cláusula de ${precio} a **${de}**`);
+    if (op.tipo === "renovacion") extra.push("✍️ Renovación de contrato");
+    if (op.tipo === "cambio_clausula") extra.push(`🔒 Cláusula actual: **${op.clausulaAnterior || "sin cláusula"}**`);
+  }
+  if (op.mensaje) extra.push(`💬 "${op.mensaje}"`);
+  const cabecera = op.contra ? "🔄 **Contraoferta**" : op.rondas ? "🔄 **Nueva oferta**" : `📩 **${ES_TITULOS[op.tipo]}**`;
+  return `${cabecera} · ${guild?.name || "servidor"}\n\n${principal}\n${extra.join("\n")}`.trim();
+}
+function esBotonesOferta(id) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`es_ok:${id}`).setLabel("Confirmar").setEmoji("✅").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`es_reneg:${id}`).setLabel("Renegociar").setEmoji("🔄").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`es_no:${id}`).setLabel("Rescindir").setEmoji("❌").setStyle(ButtonStyle.Danger)
+  );
+}
 async function esEnviarPaso(op) {
   const guild = client.guilds.cache.get(op.guildId);
-  const paso = op.pasos[op.paso];
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`es_ok:${op.id}`).setLabel("Aceptar").setEmoji("✅").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`es_no:${op.id}`).setLabel("Rechazar").setEmoji("❌").setStyle(ButtonStyle.Danger)
-  );
-  const pregunta = paso.tipo === "club"
-    ? `Como director de **${esClubNombre(guild, paso.roleId)}**, ¿aceptas?`
-    : "¿Aceptas esta operación?";
-  const contenido = `📩 **${ES_TITULOS[op.tipo]}** — ${guild?.name || "servidor"}\nPropuesta por <@${op.proponenteId}>\n\n${esDescribirOp(op, guild)}\n\n${pregunta}`;
+  const contenido = esMensajeOferta(op, guild);
   let enviados = 0;
   for (const id of esAprobadores(op)) {
     const user = await client.users.fetch(id).catch(() => null);
-    const ok = user ? await user.send({ content: contenido, components: [row] }).then(() => true).catch(() => false) : false;
+    const ok = user ? await user.send({ content: contenido, components: [esBotonesOferta(op.id)] }).then(() => true).catch(() => false) : false;
     if (ok) enviados++;
   }
   return enviados;
+}
+
+// ----- renegociar: formulario con las condiciones que se pueden cambiar -----
+function esCamposReneg(op) {
+  const paso = op.pasos[op.paso];
+  const campos = [];
+  if (paso.tipo === "usuario" && ES_CONTRATO_JUGADOR.includes(op.tipo)) {
+    if (op.tipo !== "cambio_clausula") campos.push("temporadas");
+    campos.push("clausula");
+  }
+  if (paso.tipo === "club" && (op.tipo === "traspaso" || op.tipo === "cesion")) campos.push("precio");
+  return campos;
+}
+function esModalReneg(op) {
+  const t = esTerminos(op);
+  const def = {
+    temporadas: ["Temporadas de contrato (1 a 10)", t.temporadas],
+    clausula: ["Cláusula (ej: 30M)", t.clausula],
+    precio: ["Precio (ej: 20M)", formatMoney(op.precio || 0)]
+  };
+  const modal = new ModalBuilder().setCustomId(`es_mod:${op.id}`).setTitle("Renegociar");
+  for (const k of esCamposReneg(op)) {
+    const input = new TextInputBuilder().setCustomId(k).setLabel(def[k][0]).setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10);
+    if (def[k][1]) input.setValue(def[k][1]);
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+  }
+  modal.addComponents(new ActionRowBuilder().addComponents(
+    new TextInputBuilder().setCustomId("mensaje").setLabel("Mensaje (opcional)").setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(300)
+  ));
+  return modal;
+}
+// cantidades: "30M", "500K" o "30" (un número pequeño se entiende en millones)
+function esCantidad(texto) {
+  let v = money(texto);
+  if (Number.isFinite(v) && v > 0 && v < 1000) v *= 1000000;
+  return v;
+}
+async function esModalRenegEnviado(interaction) {
+  const id = interaction.customId.split(":")[1];
+  const pending = read(PENDING_FILE);
+  const op = pending[`op:${id}`];
+  if (!op) return interaction.reply({ content: "⌛ Esta propuesta ya no existe.", ephemeral: true });
+  if (!esAprobadores(op).includes(interaction.user.id)) return interaction.reply({ content: "⌛ Esta propuesta ya no está esperando tu respuesta.", ephemeral: true });
+  const campo = k => { try { return interaction.fields.getTextInputValue(k).trim(); } catch { return null; } };
+
+  const nuevos = {};
+  const tTxt = campo("temporadas");
+  if (tTxt !== null) {
+    const n = Number(tTxt.replace(/^T/i, ""));
+    if (!Number.isInteger(n) || n < 1 || n > 10) return interaction.reply({ content: "❌ Las temporadas deben ser un número del 1 al 10.", ephemeral: true });
+    nuevos.temporadas = `T${n}`;
+  }
+  const cTxt = campo("clausula");
+  if (cTxt !== null) {
+    const v = esCantidad(cTxt);
+    if (!Number.isFinite(v) || v <= 0) return interaction.reply({ content: "❌ Cláusula inválida. Ejemplo: 30M.", ephemeral: true });
+    nuevos.clausula = formatMoney(v);
+  }
+  const pTxt = campo("precio");
+  if (pTxt !== null) {
+    const v = esCantidad(pTxt);
+    if (!Number.isFinite(v) || v < 0) return interaction.reply({ content: "❌ Precio inválido. Ejemplo: 20M.", ephemeral: true });
+    op.precio = v;
+  }
+  op.values = { ...(op.values || {}), ...nuevos };
+  op.mensaje = campo("mensaje") || null;
+  op.rondas = (op.rondas || 0) + 1;
+  op.contra = !op.contra; // la pelota pasa al otro lado
+  pending[`op:${id}`] = op;
+  write(PENDING_FILE, pending);
+
+  const desdeMensaje = interaction.isFromMessage();
+  await (desdeMensaje ? interaction.deferUpdate() : interaction.deferReply({ ephemeral: true }));
+  const guild = client.guilds.cache.get(op.guildId);
+  const enviados = await esEnviarPaso(op);
+  if (!enviados) {
+    esBorrarOp(id);
+    return interaction.editReply({ content: `❌ No pude enviar la contraoferta a ${esQuienFalta(op, guild)} por MD. La operación se canceló.`, components: [] });
+  }
+  if (guild) await esEnviarCanal(guild, cfg(guild.id).offersLogChannel, `🔄 **Renegociación** de <@${interaction.user.id}>\n${esDescribirOp(op, guild)}`);
+  return interaction.editReply({ content: `🔄 Contraoferta enviada a ${esQuienFalta(op, guild)}. Te avisaré cuando responda.\n\n${esDescribirOp(op, guild)}`, components: [] });
 }
 function esBorrarOp(id) {
   const pending = read(PENDING_FILE);
@@ -669,14 +800,24 @@ async function esBotonOp(interaction) {
   }
   const guild = client.guilds.cache.get(op.guildId);
 
+  if (accion === "es_reneg") return interaction.showModal(esModalReneg(op));
+
   if (accion === "es_no") {
     esBorrarOp(id);
-    await esAvisar(op.proponenteId, `❌ <@${interaction.user.id}> ha rechazado: **${ES_TITULOS[op.tipo]}**\n${esDescribirOp(op, guild)}`);
-    if (guild) await esEnviarCanal(guild, cfg(guild.id).offersLogChannel, `❌ **${ES_TITULOS[op.tipo]} rechazada** por <@${interaction.user.id}>\n${esDescribirOp(op, guild)}`);
-    return interaction.update({ content: `❌ Has rechazado: **${ES_TITULOS[op.tipo]}**\n\n${esDescribirOp(op, guild)}`, components: [] });
+    // avisar a la otra parte
+    const otros = op.contra ? esAprobadores({ ...op, contra: false }) : [op.proponenteId];
+    for (const uid of otros) {
+      if (uid !== interaction.user.id) await esAvisar(uid, `❌ <@${interaction.user.id}> ha rescindido: **${ES_TITULOS[op.tipo]}**\n${esDescribirOp(op, guild)}`);
+    }
+    if (guild) await esEnviarCanal(guild, cfg(guild.id).offersLogChannel, `❌ **${ES_TITULOS[op.tipo]} rescindida** por <@${interaction.user.id}>\n${esDescribirOp(op, guild)}`);
+    return interaction.update({ content: `❌ Has rescindido: **${ES_TITULOS[op.tipo]}**\n\n${esDescribirOp(op, guild)}`, components: [] });
   }
 
+  // Confirmar (también cuando quien hizo la oferta acepta una contraoferta: ese paso queda aceptado)
   await interaction.deferUpdate();
+  op.contra = false;
+  op.mensaje = null;
+  op.rondas = 0;
   op.paso += 1;
 
   if (op.paso < op.pasos.length) {
@@ -686,15 +827,15 @@ async function esBotonOp(interaction) {
     if (!enviados) {
       esBorrarOp(id);
       await esAvisar(op.proponenteId, `❌ Tu ${ES_TITULOS[op.tipo].toLowerCase()} se canceló: no pude enviar el MD a ${esQuienFalta(op, guild)}.`);
-      return interaction.editReply({ content: `✅ Aceptado, pero no pude enviar el MD a ${esQuienFalta(op, guild)}. La operación se canceló.`, components: [] });
+      return interaction.editReply({ content: `✅ Confirmado, pero no pude enviar el MD a ${esQuienFalta(op, guild)}. La operación se canceló.`, components: [] });
     }
-    return interaction.editReply({ content: `✅ Aceptado. Ahora falta la respuesta de ${esQuienFalta(op, guild)}.\n\n${esDescribirOp(op, guild)}`, components: [] });
+    return interaction.editReply({ content: `✅ Confirmado. Ahora falta la respuesta de ${esQuienFalta(op, guild)}.\n\n${esDescribirOp(op, guild)}`, components: [] });
   }
 
   esBorrarOp(id);
   const res = await esEjecutarOp(op);
   if (res.ok) {
-    await esAvisar(op.proponenteId, `✅ Operación #${res.numero} completada: **${ES_TIPOS[op.tipo]}**\n${esDescribirOp(op, guild)}`);
+    if (op.proponenteId !== interaction.user.id) await esAvisar(op.proponenteId, `✅ Operación #${res.numero} completada: **${ES_TIPOS[op.tipo]}**\n${esDescribirOp(op, guild)}`);
     if (guild) await esEnviarCanal(guild, cfg(guild.id).offersLogChannel, `✅ **${ES_TITULOS[op.tipo]} aceptada** — Operación #${res.numero}`);
   } else {
     await esAvisar(op.proponenteId, `❌ No se pudo completar: **${ES_TITULOS[op.tipo]}** — ${res.msg}`);
@@ -1365,8 +1506,12 @@ async function esComandoAyuda(interaction) {
 }
 
 async function manejarComandosES(interaction) {
-  if (interaction.isButton() && /^es_(ok|no):/.test(interaction.customId)) {
+  if (interaction.isButton() && /^es_(ok|no|reneg):/.test(interaction.customId)) {
     await esBotonOp(interaction);
+    return true;
+  }
+  if (interaction.isModalSubmit() && interaction.customId.startsWith("es_mod:")) {
+    await esModalRenegEnviado(interaction);
     return true;
   }
   if (interaction.isButton() && (interaction.customId.startsWith("es_conf:") || interaction.customId === "es_cancel")) {
