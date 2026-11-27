@@ -162,7 +162,7 @@ async function updateBudgetPanel(guild) {
 }
 
 const CLAUSULA_OPTIONS_M = [1, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 180, 200, 220, 240, 250];
-const CESION_DURATION_OPTIONS = ["1 partido", "3 partidos", "5 partidos", "10 partidos", "15 partidos", "Media temporada", "1 temporada", "2 temporadas", "3 temporadas"];
+const CESION_DURATION_OPTIONS = ["Media temporada", "1 temporada", "2 temporadas", "3 temporadas"];
 
 // ===== Comandos en español (estilo LLV): definición =====
 const CLAUSULA_CHOICES = CLAUSULA_OPTIONS_M.map(v => ({ name: `${v}M`, value: `${v}M` }));
@@ -566,6 +566,10 @@ function esDinero1(v) {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
   return String(n);
 }
+// 223000000 -> 223.000.000
+function esPuntos(n) {
+  return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
 function esTextoCompletada(op, guild, numero, valores, enCanal) {
   const club = id => (enCanal ? `<@&${id}>` : `**${esClubNombre(guild, id)}**`);
   const J = `<@${op.jugadorId}>`;
@@ -583,7 +587,12 @@ function esTextoCompletada(op, guild, numero, valores, enCanal) {
   else if (op.tipo === "fin_cesion") cuerpo = `Fin de cesión: ${J} vuelve de ${a} a ${de}.`;
   else if (op.tipo === "renovacion") cuerpo = `Renovación: ${J} renueva con ${de}.${contrato}`;
   else cuerpo = `Cambio de cláusula: ${J} tiene nueva cláusula con ${de}: ${op.clausulaAnterior ? esDinero1(op.clausulaAnterior) : "sin cláusula"} → ${cl}.`;
-  return `**Operación ${numero} completada**: ${cuerpo}`;
+  let extra = "";
+  if (enCanal && ["traspaso", "clausula", "cesion"].includes(op.tipo)) {
+    const partes = [precio ? `(por ${precio})` : null, op.tipo === "cesion" ? `(${op.duracion.toLowerCase()})` : temp ? `(${temp} temporada${temp === "1" ? "" : "s"})` : null].filter(Boolean);
+    extra = `\n${J}: ${de ? `${de} ➡️ ` : "➡️ "}${a}${partes.length ? " " + partes.join(" ") : ""}`;
+  }
+  return `**Operación ${numero} completada**: ${cuerpo}${extra}`;
 }
 function esBotonesOferta(id) {
   return new ActionRowBuilder().addComponents(
@@ -994,9 +1003,9 @@ async function esComandoClub(interaction) {
   if (sub === "presupuestos") {
     const lineas = Object.values(t)
       .sort((a, b) => b.budget - a.budget)
-      .map((club, i) => `**${i + 1}.** <@&${club.roleId}> — 💵 **${formatMoney(club.budget)}**`);
+      .map((club, i) => `**${i + 1}.** ${esClubNombre(guild, club.roleId)} — <@&${club.roleId}>\n💰 Saldo: **${esPuntos(club.budget)}**`);
     const embed = new EmbedBuilder().setTitle("💰 Presupuestos de los clubes")
-      .setDescription(esLista(lineas, "Todavía no hay clubes. Usa /club crear."));
+      .setDescription(esLista(lineas.map(l => l + "\n"), "Todavía no hay clubes. Usa /club crear."));
     return interaction.reply({ embeds: [embed] });
   }
 
@@ -1422,12 +1431,8 @@ async function esComandoCesion(interaction) {
     const activas = Object.entries(r)
       .filter(([, i]) => i.cesion)
       .map(([id, i]) => `🔄 <@${id}>: ${esClubNombre(guild, i.cesion.origenRoleId)} → ${esClubNombre(guild, i.teamRoleId)} (${i.cesion.duracion})`);
-    const pendientes = Object.entries(read(PENDING_FILE))
-      .filter(([k, op]) => k.startsWith("op:") && op.guildId === guild.id && (op.tipo === "cesion" || op.tipo === "fin_cesion"))
-      .map(([, op]) => `⏳ <@${op.jugadorId}>: ${op.tipo === "fin_cesion" ? "fin anticipado" : `${esClubNombre(guild, op.origenRoleId)} → ${esClubNombre(guild, op.destinoRoleId)} (${op.duracion})`} — esperando a ${esQuienFalta(op, guild)}`);
     const embed = new EmbedBuilder().setTitle("🔄 Cesiones").setDescription(esLista([
-      `**Activas (${activas.length})**`, ...(activas.length ? activas : ["Ninguna."]),
-      "", `**Pendientes (${pendientes.length})**`, ...(pendientes.length ? pendientes : ["Ninguna."])
+      `**Activas (${activas.length})**`, ...(activas.length ? activas : ["Ninguna."])
     ], "—"));
     return interaction.reply({ embeds: [embed] });
   }
@@ -1586,6 +1591,7 @@ async function manejarComandosES(interaction) {
 }
 
 client.once("ready", async () => {
+  try { if (client.user.username !== "TRANSFERS LLV") await client.user.setUsername("TRANSFERS LLV"); } catch (e) { console.log("No pude cambiar el nombre:", e.message); }
   console.log(`🤖 Conectado como ${client.user.tag}`);
   await registerCommands().catch(console.error);
 });
